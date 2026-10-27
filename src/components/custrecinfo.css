@@ -1,0 +1,26 @@
+/* Checkout: contact details and delivery form. */
+
+.contact-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--space-4);
+  margin: 0 0 var(--space-6);
+  padding-bottom: var(--space-5);
+  border-bottom: var(--hairline);
+}
+.contact-list dt { font-size: 0.8125rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-text-muted); }
+.contact-list dd { margin: var(--space-1) 0 0; overflow-wrap: anywhere; }
+
+.delivery-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5) var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.delivery-form .field + .field { margin-top: 0; }
+.delivery-form .field--customerAddress { grid-column: 1 / -1; }
+.required-mark { color: var(--color-text-secondary); }
+
+@media (max-width: 560px) {
+  .delivery-form { grid-template-columns: 1fr; }
+}

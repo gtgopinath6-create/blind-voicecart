@@ -1,0 +1,13 @@
+# Files NOT uploaded by `gcloud run deploy --source server`.
+# Without this file gcloud would upload server/.env (secrets) into the build.
+.gcloudignore
+.env
+.env.*
+!.env.example
+node_modules/
+test/
+backups/
+*.log
+*service-account*.json
+*serviceAccount*.json
+*-firebase-adminsdk-*.json

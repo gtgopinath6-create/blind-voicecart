@@ -1,0 +1,48 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# testing
+/coverage
+
+# production
+/build
+
+# misc
+.env
+.DS_Store
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local backup of files removed during the 2026-10-25 cleanup
+/backup
+
+# server secrets and dependencies
+/server/.env
+/server/node_modules
+
+# Firebase CLI / emulator logs
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+database-debug.log*
+
+# Service-account keys must never be committed (keep them outside the repo)
+*service-account*.json
+*serviceAccount*.json
+*-firebase-adminsdk-*.json
+
+# Local backups written by server/scripts/dedupe-products.js
+/server/backups
+
+# Local staging build settings (public values, kept out of Git to avoid mixing projects)
+.env.staging

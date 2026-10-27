@@ -1,0 +1,197 @@
+/*
+ * VoiceCart — Noir Prestige design tokens.
+ * Raw colour values live only in this file; components use the semantic variables below.
+ * Contrast ratios (WCAG 2.x) are noted for every colour used as text or as a control outline.
+ */
+:root {
+  /* ---------- Brand palette ---------- */
+  --np-noir: #0B0B0C;          /* main page background */
+  --np-obsidian: #121214;      /* header, navigation, primary surfaces */
+  --np-charcoal: #1A191B;      /* cards, drawers, elevated sections */
+  --np-walnut: #29211F;        /* secondary panels, selected surfaces */
+  --np-champagne: #C2A46D;     /* brand accent: 8.3:1 on noir, 7.4:1 on charcoal, 6.6:1 on walnut */
+  --np-antique: #A88952;       /* restrained accent lines: 6.0:1 on noir */
+  --np-ivory: #F5F0E8;         /* primary text: 17.3:1 on noir, 15.4:1 on charcoal */
+  --np-soft-ivory: #D8D0C5;    /* secondary text: 12.9:1 on noir, 10.3:1 on walnut */
+  --np-taupe: #A69A8B;         /* supporting text: 7.1:1 on noir, 5.7:1 on walnut */
+  --np-graphite: #353235;      /* dividers only (decorative, 1.5:1) */
+  --np-success: #75B798;       /* 8.4:1 on noir */
+  --np-error: #F08D8D;         /* 8.3:1 on noir */
+  --np-warning: #E6BD75;       /* 11.2:1 on noir */
+
+  /* ---------- Derived tones (each documented) ---------- */
+  --np-lift: #222024;          /* hover surface between charcoal and walnut */
+  --np-smoke: #77706A;         /* control outlines: 4.0:1 on noir, 3.6:1 on charcoal, 3.2:1 on walnut (WCAG 1.4.11 needs 3:1) */
+  --np-champagne-light: #D3BB8E; /* hover state of gold fills */
+  --np-gallery-1: #F1ECE4;     /* product photo "gallery wall": lit centre … */
+  --np-gallery-2: #E2DBD1;     /* … mid … */
+  --np-gallery-3: #D3CABE;     /* … and edge. Catalog photos are shot on white; multiply blends them in. */
+  /* Ivory (secondary) theme */
+  --np-paper: #FBF8F3;
+  --np-sand: #ECE5DA;
+  --np-linen-line: #DDD4C7;
+  --np-taupe-ink: #655B52;     /* 5.8:1 on ivory */
+  --np-gold-ink: #76592E;      /* 5.7:1 on ivory */
+  --np-control-ink: #857A6E;   /* 3.7:1 on ivory: control outlines */
+  --np-success-ink: #2D6A4F;   /* 5.6:1 on ivory */
+  --np-error-ink: #A13636;     /* 6.0:1 on ivory */
+  --np-warning-ink: #82561A;   /* 5.6:1 on ivory */
+
+  /* ---------- Semantic colours: Noir Prestige (default) ---------- */
+  --color-background: var(--np-noir);
+  --color-surface: var(--np-obsidian);
+  --color-surface-elevated: var(--np-charcoal);
+  --color-surface-hover: var(--np-lift);
+  --color-surface-selected: var(--np-walnut);
+  --color-text-primary: var(--np-ivory);
+  --color-text-secondary: var(--np-soft-ivory);
+  --color-text-muted: var(--np-taupe);
+  --color-accent: var(--np-champagne);           /* brand mark, dividers, selected and active states */
+  --color-accent-hover: var(--np-champagne-light);
+  --color-accent-subtle: var(--np-antique);      /* fine decorative lines */
+  --color-accent-text: var(--np-champagne);      /* small gold labels (8.3:1) */
+  --color-on-accent: var(--np-noir);             /* text on gold fills: 8.3:1 */
+  --color-border: var(--np-graphite);
+  --color-border-strong: var(--np-smoke);
+  --color-primary: var(--np-ivory);              /* primary buttons: ivory fill, noir label (17.3:1) */
+  --color-primary-hover: var(--np-soft-ivory);
+  --color-on-primary: var(--np-noir);
+  --color-selected-bg: var(--color-surface-selected);
+  --color-selected-border: var(--np-champagne);
+  --color-success: var(--np-success);
+  --color-success-bg: rgba(117, 183, 152, 0.1);
+  --color-error: var(--np-error);
+  --color-error-bg: rgba(240, 141, 141, 0.1);
+  --color-warning: var(--np-warning);
+  --color-warning-bg: rgba(230, 189, 117, 0.1);
+  --color-focus: var(--np-champagne);            /* focus ring: 8.3:1 on noir */
+
+  /* Product photos sit on a lit "gallery" well in both themes. */
+  --color-image-well: var(--np-gallery-2);
+  --gradient-image-well: radial-gradient(130% 100% at 50% 28%, var(--np-gallery-1) 0%, var(--np-gallery-2) 58%, var(--np-gallery-3) 100%);
+  --color-on-well: var(--np-noir);               /* focus ring and icons drawn on the well */
+  --color-on-well-muted: #574E45;                /* secondary text on the well: 5.0:1 at its darkest edge */
+  --color-well-strip: var(--np-ivory);
+
+  /* Feature band (voice section): a walnut stage in Noir, a noir stage in Ivory */
+  --color-band-bg: var(--np-walnut);
+  --color-band-text: var(--np-ivory);
+  --color-band-secondary: var(--np-soft-ivory);
+  --color-band-accent: var(--np-champagne);
+  --color-band-on-primary: var(--np-noir);
+  --color-band-control: var(--np-smoke);
+  --color-band-line: rgba(245, 240, 232, 0.16);  /* decorative rules on the band */
+
+  /* Voice assistant: always a noir surface, in both themes */
+  --assistant-bg: var(--np-obsidian);
+  --assistant-hover: var(--np-lift);
+  --assistant-border: var(--np-graphite);
+  --assistant-text: var(--np-ivory);
+  --assistant-secondary: var(--np-soft-ivory);
+  --assistant-muted: var(--np-taupe);
+  --assistant-accent: var(--np-champagne);
+  --assistant-on-accent: var(--np-noir);
+  --assistant-control: var(--np-smoke);
+  --assistant-error: var(--np-error);
+
+  --shadow-elevated: 0 1px 0 rgba(245, 240, 232, 0.03) inset, 0 18px 48px rgba(0, 0, 0, 0.45);
+  --shadow-float: 0 20px 60px rgba(0, 0, 0, 0.6);
+  --shadow-product: 0 28px 32px rgba(0, 0, 0, 0.55);   /* drop shadow under cut-out product photos */
+  --glow-accent: radial-gradient(closest-side, rgba(194, 164, 109, 0.16), rgba(194, 164, 109, 0));
+
+  /* ---------- Typography ---------- */
+  --font-display: "Cormorant Garamond", "Cormorant", Georgia, serif;
+  --font-body: "Inter", Arial, sans-serif;
+  --text-xs: 0.875rem;       /* supporting text: 14px */
+  --text-sm: 0.9375rem;      /* buttons, labels: 15px */
+  --text-base: 1rem;         /* body: 16px */
+  --text-md: 1.125rem;       /* product names, prices: 18px */
+  --text-lg: 1.375rem;
+  --text-h3: 1.75rem;
+  --text-product: clamp(1rem, 0.95rem + 0.25vw, 1.1875rem);   /* 16–19px */
+  --text-price: clamp(1rem, 0.95rem + 0.3vw, 1.25rem);        /* 16–20px */
+  --text-h2: clamp(1.875rem, 1.45rem + 1.2vw, 2.5rem);        /* section heading: 30–40px */
+  --text-h1: clamp(2.25rem, 1.55rem + 2.25vw, 3.5rem);        /* page heading: 36–56px */
+  --text-display: clamp(2.75rem, 1.5rem + 4.4vw, 5rem);       /* hero: 44px on phones, 64–80px on desktops */
+  --leading-tight: 1.04;
+  --leading-snug: 1.3;
+  --leading-body: 1.65;
+  --tracking-eyebrow: 0.18em;
+
+  /* ---------- Spacing (4px base) ---------- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4.5rem;
+  --space-9: 7rem;
+  --space-section: clamp(3.5rem, 2.5rem + 4vw, 7rem);
+  --gutter: clamp(1rem, 4vw, 3rem);
+  --container: 1440px;
+  --measure: 62ch;
+
+  --radius-control: 2px;
+  --radius-card: 4px;
+  --radius-pill: 999px;
+  --control-height: 2.75rem;   /* 44px touch target */
+  --assistant-clearance: 5.5rem; /* sticky bars sit above the floating voice control */
+  --hairline: 1px solid var(--color-border);
+
+  /* ---------- Motion ---------- */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur-fast: 150ms;
+  --dur: 250ms;
+
+  /* ---------- Layers ---------- */
+  --z-header: 100;
+  --z-menu: 200;
+  --z-assistant: 900;
+  --z-skip: 1000;
+
+  color-scheme: dark;
+}
+
+/* Ivory: the secondary, light theme of the same system (same gold, same type, darker inks for contrast). */
+[data-theme="ivory"] {
+  --color-background: var(--np-ivory);
+  --color-surface: var(--np-paper);
+  --color-surface-elevated: var(--np-paper);
+  --color-surface-hover: var(--np-sand);
+  --color-surface-selected: var(--np-sand);
+  --color-text-primary: var(--np-noir);          /* 17.3:1 */
+  --color-text-secondary: var(--np-walnut);      /* 13.9:1 */
+  --color-text-muted: var(--np-taupe-ink);       /* 5.8:1 */
+  --color-accent: var(--np-antique);             /* decorative only on ivory (2.9:1) */
+  --color-accent-hover: var(--np-champagne);
+  --color-accent-subtle: var(--np-antique);
+  --color-accent-text: var(--np-gold-ink);
+  --color-on-accent: var(--np-noir);             /* noir on antique gold: 6.0:1 */
+  --color-border: var(--np-linen-line);
+  --color-border-strong: var(--np-control-ink);
+  --color-primary: var(--np-noir);
+  --color-primary-hover: var(--np-walnut);
+  --color-on-primary: var(--np-ivory);
+  --color-selected-border: var(--np-gold-ink);
+  --color-success: var(--np-success-ink);
+  --color-success-bg: rgba(45, 106, 79, 0.08);
+  --color-error: var(--np-error-ink);
+  --color-error-bg: rgba(161, 54, 54, 0.07);
+  --color-warning: var(--np-warning-ink);
+  --color-warning-bg: rgba(130, 86, 26, 0.08);
+  --color-focus: var(--np-gold-ink);             /* 5.7:1 on ivory */
+
+  --color-image-well: var(--np-paper);
+  --gradient-image-well: radial-gradient(130% 100% at 50% 28%, #FFFFFF 0%, var(--np-paper) 55%, var(--np-sand) 100%);
+
+  --color-band-bg: var(--np-noir);
+
+  --shadow-elevated: 0 1px 2px rgba(11, 11, 12, 0.05), 0 14px 36px rgba(11, 11, 12, 0.08);
+  --shadow-float: 0 20px 50px rgba(11, 11, 12, 0.28);
+  --shadow-product: 0 24px 26px rgba(11, 11, 12, 0.22);
+  --glow-accent: radial-gradient(closest-side, rgba(168, 137, 82, 0.18), rgba(168, 137, 82, 0));
+
+  color-scheme: light;
+}

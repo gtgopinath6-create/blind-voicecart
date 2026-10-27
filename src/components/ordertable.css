@@ -1,0 +1,6 @@
+/* Checkout: order table. */
+
+.order-table th, .order-table td { padding-inline: 0; }
+.order-table th[scope="col"].num, .order-table td.num { padding-left: var(--space-4); }
+.order-table__name { display: block; font-weight: 500; }
+.order-table__meta { display: block; margin-top: 2px; color: var(--color-text-secondary); font-size: var(--text-xs); font-weight: 400; text-transform: capitalize; }

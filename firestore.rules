@@ -1,0 +1,101 @@
+rules_version = '2';
+
+// VoiceCart Firestore Security Rules.
+//
+// Trust model:
+//  - Admin rights come ONLY from the `admin` custom claim on the Firebase Auth token,
+//    set with `npm run set-admin` (Admin SDK). The old `admin` field in user documents is ignored.
+//  - Wallet balances, orders, purchase history and wallet transactions are written only by
+//    the server (Admin SDK bypasses these rules). Browsers can never change them.
+//  - Users can read their own profile and change only their cart, wishlist and display name.
+//  - Everything not matched below is denied.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() && request.auth.token.admin == true;
+    }
+
+    function ownsExisting() {
+      return signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Each check applies only when the field exists, so older profiles missing a field still work.
+    function validCart(data) {
+      return !('cart' in data) || (data.cart is list && data.cart.size() <= 50);
+    }
+
+    function validWishlist(data) {
+      return !('wishlist' in data) || (data.wishlist is list && data.wishlist.size() <= 100);
+    }
+
+    function validName(data) {
+      return !('name' in data) || (data.name is string && data.name.size() <= 80);
+    }
+
+    // ---------- users ----------
+    // New profiles use users/{uid}. Older profiles have random ids with a `uid` field;
+    // ownership is always checked through that field.
+    match /users/{docId} {
+      // docId == uid also lets a new user check whether their profile exists yet.
+      allow read: if (signedIn() && docId == request.auth.uid) || ownsExisting() || isAdmin();
+
+      // A signed-in user may create only their own profile, with a zero wallet and no extra fields.
+      allow create: if signedIn()
+        && docId == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['uid', 'email', 'name', 'cart', 'wishlist', 'wallet', 'purchaseHistory'])
+        && request.resource.data.keys().hasAll(['uid', 'email', 'name', 'cart', 'wishlist', 'wallet', 'purchaseHistory'])
+        && request.resource.data.wallet == 0
+        && request.resource.data.purchaseHistory == []
+        && (!('email' in request.auth.token) || request.resource.data.email == request.auth.token.email)
+        && validName(request.resource.data)
+        && validCart(request.resource.data)
+        && validWishlist(request.resource.data);
+
+      // Owners may only change cart, wishlist and name - never wallet, uid, email, purchaseHistory or admin.
+      allow update: if ownsExisting()
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cart', 'wishlist', 'name'])
+        && validCart(request.resource.data)
+        && validWishlist(request.resource.data)
+        && validName(request.resource.data);
+
+      // Account deletion goes through the server (it also removes the login).
+      allow delete: if false;
+    }
+
+    // ---------- products ----------
+    match /products/{productId} {
+      allow read: if true;
+
+      allow create, update: if isAdmin()
+        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 150
+        && request.resource.data.price is number && request.resource.data.price >= 0
+        && request.resource.data.category is list && request.resource.data.category.size() == 3
+        && request.resource.data.image is list
+        && request.resource.data.description is string
+        && (!('rating' in request.resource.data) || (request.resource.data.rating is number
+            && request.resource.data.rating >= 0 && request.resource.data.rating <= 5))
+        && (!('stock' in request.resource.data) || (request.resource.data.stock is int && request.resource.data.stock >= 0));
+
+      allow delete: if isAdmin();
+    }
+
+    // ---------- orders (server-written) ----------
+    match /orders/{orderId} {
+      allow read: if ownsExisting() || isAdmin();
+      allow write: if false;
+    }
+
+    // ---------- wallet transactions (server-written) ----------
+    match /walletTransactions/{txId} {
+      allow read: if ownsExisting() || isAdmin();
+      allow write: if false;
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "voicecart-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Trusted backend for VoiceCart: Groq proxy, checkout, wallet and admin operations.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test test/unit/*.test.js",
+    "test:emulator": "firebase emulators:exec --project demo-voicecart --only firestore,auth \"node --test --test-concurrency=1 test/emulator/*.test.js\"",
+    "set-admin": "node scripts/set-admin.js",
+    "fix-image-paths": "node scripts/fix-image-paths.js",
+    "dedupe-products": "node scripts/dedupe-products.js",
+    "copy-catalog": "node scripts/copy-catalog.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "firebase-admin": "^12.7.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.4",
+    "firebase": "^10.14.1",
+    "firebase-tools": "^14.27.0"
+  }
+}

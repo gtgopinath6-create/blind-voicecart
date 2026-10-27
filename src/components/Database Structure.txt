@@ -1,0 +1,25 @@
+Firestore data model (see firestore.rules for who may read/write what)
+
+users/{uid}                 new profiles use the Auth uid as id; older ones have random ids
+    uid                     Firebase Auth uid (ownership is checked on this field)
+    email, name
+    cart[]                  { id (product id), name, price, image[], category[], quantity, size?, color? }
+                            prices here are display copies only; the server re-reads real prices
+    wishlist[]              same shape as cart lines, plus description, rating
+    wallet                  balance in rupees            - server only
+    purchaseHistory[]       { orderId, name, price, quantity, purchaseDate } - server only
+    (admin)                 legacy field, ignored; admin rights = Auth custom claim `admin`
+
+products/{id}               public read, admin-claim write
+    name, price, description, rating
+    category[]              [category, subcategory, brand], e.g. ["shoes", "casual", "nike"]
+    image[]                 "/images/<file>" (matched case-insensitively to public/images)
+    size[]?, color[]?       options the shopper must choose from
+    gender?, stock?         stock is enforced at checkout only if present
+
+orders/{uid}_{requestId}    server only; one per checkout request id (idempotent)
+    uid, items[] { productId, name, size, color, unitPrice, quantity, lineTotal },
+    subtotal, tax (18%), total, shipping{}, walletBalanceAfter, status, createdAt
+
+walletTransactions/{provider}_{paymentId}   server only; one per verified payment
+    uid, type, amount, provider, paymentId, balanceBefore, balanceAfter, createdAt

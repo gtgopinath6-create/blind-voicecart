@@ -1,0 +1,13 @@
+# Files kept out of Docker build contexts.
+# Without this file a Docker build would copy server/.env (secrets) into the build.
+.dockerignore
+.env
+.env.*
+!.env.example
+node_modules/
+test/
+backups/
+*.log
+*service-account*.json
+*serviceAccount*.json
+*-firebase-adminsdk-*.json

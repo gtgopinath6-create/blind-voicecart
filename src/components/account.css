@@ -1,0 +1,26 @@
+/* Account page. */
+
+.account { padding-bottom: var(--space-8); }
+.account__error { margin-top: var(--space-7); }
+
+.account__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--space-5);
+}
+.account__details { margin: 0; display: grid; gap: var(--space-4); }
+.account__details dt { font-size: 0.8125rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-text-muted); }
+.account__details dd { margin: var(--space-1) 0 0; font-size: var(--text-md); overflow-wrap: anywhere; }
+.account__balance { font-family: var(--font-display); font-size: var(--text-h2); font-weight: 400; line-height: 1.1; margin-bottom: var(--space-2); }
+.account__links { margin: 0; padding: 0; list-style: none; }
+.account__links a {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 3rem;
+  border-bottom: var(--hairline);
+  text-decoration: none;
+}
+.account__links a .icon { color: var(--color-accent); }
+.account__links a:hover { text-decoration: underline; text-decoration-color: var(--color-accent); }
+.account__history-title { margin-bottom: var(--space-5); font-size: var(--text-h3); font-weight: 500; }

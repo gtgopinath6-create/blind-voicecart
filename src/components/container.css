@@ -1,0 +1,55 @@
+/* Product listing pages (category, search, shop all) and the wishlist. */
+
+.listing { padding-bottom: var(--space-8); }
+.listing__header { margin-bottom: var(--space-6); }
+.listing__header .page-title:focus { outline: none; }
+/* "Show more products": the next page is read only when asked for. */
+.listing__more {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-8);
+}
+.listing__more .catalog-error { justify-self: stretch; }
+
+.suggestion-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.suggestion-list a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-height);
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  text-decoration: none;
+  border-bottom: 1px solid var(--color-accent-subtle);
+}
+.suggestion-list a:hover { border-bottom-color: var(--color-accent); }
+
+.wishlist-page__guest { margin-bottom: var(--space-6); }
+.wishlist-page__guest a { font-weight: 600; }
+.save-bar .cart-actions__buttons { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+
+/* Sticky save bar used by the wishlist when there are unsaved changes */
+.save-bar {
+  position: sticky;
+  bottom: var(--assistant-clearance);
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-7);
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-surface-elevated);
+  border: var(--hairline);
+  border-top: 1px solid var(--color-accent-subtle);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-elevated);
+}
