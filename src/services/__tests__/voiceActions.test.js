@@ -26,6 +26,7 @@ const ctx = () => ({
     navigate: jest.fn(),
     goBack: jest.fn(),
     setSearch: jest.fn(),
+    setVoiceFilter: jest.fn(),
     toggleContrast: jest.fn(),
     toggleScreenReader: jest.fn(),
 });
@@ -79,11 +80,13 @@ test("an ambiguous product asks which one, then adds only the chosen product", a
     expect(addToCart).toHaveBeenCalledWith(expect.objectContaining({ id: "aj" }), null, 1);
 });
 
-test("an exact, inexpensive product is added directly with name and price read back", async () => {
+test("an exact, inexpensive product is added directly, with name and price read back, and the cart page opens", async () => {
     aiSays({ intent: "ADD_TO_CART", target: "Nike Air Force 1" });
-    const outcome = await runVoiceCommand("add nike air force 1 to my cart", ctx());
-    expect(outcome.message).toBe("Added 1 Nike Air Force 1 at ₹9000 each to your cart.");
+    const c = ctx();
+    const outcome = await runVoiceCommand("add nike air force 1 to my cart", c);
+    expect(outcome.message).toBe("Added 1 Nike Air Force 1 at ₹9000 each to your cart. I have opened your cart.");
     expect(addToCart).toHaveBeenCalledTimes(1);
+    expect(c.navigate).toHaveBeenCalledWith("/cart");
 });
 
 test("a costly product needs its option and an explicit yes before it is added", async () => {
@@ -184,6 +187,44 @@ test("AI output with an unknown intent or unsafe page is not executed", async ()
     // Falls back to the local parser, which opens the real Shoes page.
     expect(c.navigate).toHaveBeenCalledWith("/categories/Shoes");
     expect(c.navigate).not.toHaveBeenCalledWith("https://evil.example");
+});
+
+test('"search" with a bare category word opens the real category page', async () => {
+    aiSays({ intent: "SEARCH", target: "shoes" });
+    const c = ctx();
+    const outcome = await runVoiceCommand("search shoes", c);
+    expect(c.navigate).toHaveBeenCalledWith("/categories/Shoes");
+    expect(c.navigate).not.toHaveBeenCalledWith("/categories/Search");
+    expect(c.setSearch).not.toHaveBeenCalled();
+    expect(c.setVoiceFilter).toHaveBeenCalledWith({ category: "Shoes" });
+    expect(outcome.message).toBe("Opening Shoes.");
+});
+
+test('"search" with a category synonym also opens the category page, case-insensitively', async () => {
+    aiSays({ intent: "SEARCH", target: "Footwear" });
+    const c = ctx();
+    await runVoiceCommand("search footwear", c);
+    expect(c.navigate).toHaveBeenCalledWith("/categories/Shoes");
+});
+
+test('"search nike shoes" opens the Shoes category filtered to Nike, not a generic search', async () => {
+    aiSays({ intent: "SEARCH", target: "nike shoes" });
+    const c = ctx();
+    const outcome = await runVoiceCommand("search nike shoes", c);
+    expect(c.navigate).toHaveBeenCalledWith("/categories/Shoes");
+    expect(c.navigate).not.toHaveBeenCalledWith("/categories/Search");
+    expect(c.setSearch).not.toHaveBeenCalled();
+    expect(c.setVoiceFilter).toHaveBeenCalledWith(expect.objectContaining({ category: "Shoes", brand: "nike" }));
+    expect(outcome.message).toBe("Opening Shoes, filtered to Nike.");
+});
+
+test('"search" with words that resolve no category still runs a text search, not a category page', async () => {
+    aiSays({ intent: "SEARCH", target: "chilli chatka" });
+    const c = ctx();
+    const outcome = await runVoiceCommand("search chilli chatka", c);
+    expect(c.navigate).toHaveBeenCalledWith("/categories/Search");
+    expect(c.setSearch).toHaveBeenCalledWith("chilli chatka");
+    expect(outcome.message).toMatch(/Chilli Chatka/);
 });
 
 test("quantity changes target the cart line, and removing asks first", async () => {

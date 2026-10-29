@@ -30,6 +30,7 @@ function makeEnv(overrides = {}) {
         legacyRun: jest.fn(async () => ({ type: "done", message: "Done by the command layer." })),
         legacyResolve: jest.fn(async () => ({ type: "done", message: "Resolved." })),
         navigate: jest.fn(),
+        setVoiceFilter: jest.fn(),
         setSpeechRate: jest.fn(),
         addToCart: jest.fn(async () => {}),
         signIn: async () => signIn,
@@ -182,6 +183,45 @@ describe("product discovery", () => {
         const slower = await zoroTurn("speak more slowly", conv, env);
         expect(env.setSpeechRate).toHaveBeenCalledWith("slower");
         expect(slower.reply.message).toMatch(/^Okay, I'll speak more slowly\. I understood/);
+    });
+});
+
+describe("the page follows the conversation, not just speech", () => {
+    test("the category page opens as soon as the category is known, and is not re-opened every turn", async () => {
+        const { env } = makeEnv();
+        await talk(env, ["I'm looking for shoes", "yes"]);
+        const opened = env.navigate.mock.calls.filter((c) => c[0] === "/categories/Shoes");
+        expect(opened).toHaveLength(1);
+    });
+
+    test("the filter narrows as colour and type are learned, without leaving the category page", async () => {
+        const { env } = makeEnv();
+        await talk(env, ["I'm looking for shoes", "yes", "casual", "yes", "black", "yes"]);
+        const filters = env.setVoiceFilter.mock.calls.map((c) => c[0]);
+        expect(filters[filters.length - 1]).toMatchObject({ category: "Shoes", type: "casual", color: "black" });
+        expect(env.navigate.mock.calls.filter((c) => c[0] === "/categories/Shoes")).toHaveLength(1);
+    });
+
+    test("once the conversation narrows to one product, its page opens", async () => {
+        const { env } = makeEnv();
+        const { conv } = await talk(env, ["I need black Nike sports shoes in size 9", "yes"]);
+        expect(conv.productId).toBe("merc");
+        expect(env.navigate).toHaveBeenCalledWith("/product/merc");
+    });
+
+    test("adding the product to the cart opens the cart page", async () => {
+        const { env } = makeEnv();
+        await talk(env, ["I need black Nike sports shoes in size 9", "yes", "yes"]);
+        expect(env.addToCart).toHaveBeenCalledTimes(1);
+        expect(env.navigate).toHaveBeenLastCalledWith("/cart");
+    });
+
+    test("starting over clears the voice filter instead of leaving it stuck on the old category", async () => {
+        const { env } = makeEnv();
+        const { conv } = await talk(env, ["I'm looking for shoes", "yes"]);
+        env.setVoiceFilter.mockClear();
+        await talk(env, ["start over"], conv);
+        expect(env.setVoiceFilter).toHaveBeenCalledWith(null);
     });
 });
 

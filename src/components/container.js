@@ -2,7 +2,7 @@ import Product, { productTitleId } from "./products";
 import FilterPane from "./filterpane";
 import { Link } from "react-router-dom";
 import "./container.css"
-import { UserContext, SearchContext } from "../App";
+import { UserContext, SearchContext, VoiceFilterContext } from "../App";
 import { CATEGORIES } from "../services/storeCategories";
 import React, { useState, useContext, useEffect, useMemo, useRef } from "react";
 import { addToCart, addToWishlist } from "../services/cartStore";
@@ -10,6 +10,7 @@ import { useProductListing, useWholeCatalog } from "../services/useCatalog";
 import { catalogErrorMessage } from "../services/catalogService";
 import CatalogErrorNotice from "./CatalogErrorNotice";
 import { searchProducts, brandOf, categoryOf } from "../services/productMatching";
+import { filterProducts } from "../services/shoppingCatalog";
 import { announce } from "../services/announcer";
 import { usePageTitle, useHoverSpeech } from "../services/uiHooks";
 
@@ -20,6 +21,7 @@ function Container(props){
     const hover = useHoverSpeech();
     const {user} = useContext(UserContext);
     const {valueToBeSearched, setValueToBeSearched} = useContext(SearchContext);
+    const {voiceFilter} = useContext(VoiceFilterContext);
 
     const isSearchPage = props.name === "Search Results";
     const isShopAll = props.name === "Shop All";
@@ -27,6 +29,15 @@ function Container(props){
     const [brand, setBrand] = useState(null);
     const [categoryFilter, setCategoryFilter] = useState(null);
     const headingRef = useRef(null);
+
+    // Only apply a voice filter learned for THIS category; one learned elsewhere must not leak here.
+    const activeVoiceFilter = voiceFilter && voiceFilter.category && voiceFilter.category.toLowerCase() === category ? voiceFilter : null;
+
+    // The Brand chip reflects what Zoro picked, the same way a click would; a filter for another
+    // page never touches this page's own brand selection.
+    useEffect(() => {
+        if (activeVoiceFilter) setBrand(activeVoiceFilter.brand || null);
+    }, [activeVoiceFilter]);
 
     // Listings read one page at a time; only a text search reads the whole (shared, cached) catalog.
     const searching = Boolean(valueToBeSearched);
@@ -46,8 +57,9 @@ function Container(props){
     const visible = useMemo(() => {
         if (searching) return searchProducts(valueToBeSearched, searchable);
         if (isSearchPage) return [];
+        if (activeVoiceFilter) return filterProducts(inCategory, { ...activeVoiceFilter, category: props.name });
         return brand ? inCategory.filter((p) => brandOf(p) === brand) : inCategory;
-    }, [searching, valueToBeSearched, isSearchPage, searchable, inCategory, brand]);
+    }, [searching, valueToBeSearched, isSearchPage, searchable, inCategory, brand, activeVoiceFilter, props.name]);
     const hasMore = !searching && !isSearchPage && listing.status === "ready" && !listing.done;
 
     // Announce how many results the search found (debounced so typing is not interrupted).

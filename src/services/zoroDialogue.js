@@ -46,7 +46,12 @@ export const HELP_TEXT =
     "You can also type to me in the box below.";
 /** A "yes" the browser was unsure it heard is never taken as consent. */
 export const UNSURE_YES = "I think I heard yes, but I'm not sure. Please say yes or no again, or use the Yes and No buttons.";
-/** Browser confidence (0 to 1) below which a spoken yes is checked again. */
+/**
+ * Browser confidence (0 to 1) below which a spoken yes is checked again. Whisper-transcribed
+ * commands (speechInput.js's startWhisperSession, used when the browser's own recognition is
+ * unavailable or not chosen) report no real per-word confidence and use a fixed value comfortably
+ * above this threshold (WHISPER_CONFIDENCE), so this gate only ever re-checks Web Speech API answers.
+ */
 export const LOW_CONFIDENCE = 0.5;
 export const INACTIVITY_MESSAGE =
     "I've paused listening because there has been no activity. Say 'Hey Zoro' or activate the microphone when you need me.";
@@ -87,6 +92,8 @@ export function createConversation() {
         lastResponse: "",
         lastExpect: "command",
         lastChoices: [],
+        lastNavigatedCategory: null, // the category page last opened for this conversation, so it is not re-opened every turn
+        lastNavigatedProductId: null, // likewise for the product page opened once a single product is chosen
     };
 }
 
@@ -165,8 +172,54 @@ const unsure = (heard) => Boolean(heard) && heard.source === "voice" && typeof h
 /**
  * One turn of the conversation. Never throws for ordinary input.
  * heard (optional): { source: "voice" | "typed" | "button", confidence, alternatives } for the text.
+ *
+ * This is a thin wrapper around zoroTurnCore: it keeps the page in step with what the conversation
+ * has learned so far (env.navigate/env.setVoiceFilter), on top of zoroTurnCore's own spoken reply,
+ * so every path through the conversation gets this for free rather than each step having to call
+ * navigate itself. See syncPageWithConversation below.
  */
 export async function zoroTurn(text, conv, env, heard = {}) {
+    const result = await zoroTurnCore(text, conv, env, heard);
+    return { ...result, conv: syncPageWithConversation(env, conv, result.conv) };
+}
+
+/**
+ * Opens the category page as soon as it is known, and keeps it (and its brand/type/colour/size/
+ * budget filter) in step as the conversation narrows — without re-navigating every turn once the
+ * shopper is already on the right page. Once the conversation narrows to one specific product, its
+ * page opens too. A bare brand or type with no resolved category has no single page to jump to, so
+ * nothing happens until a category is known (see extractEntities/CATEGORY_WORDS in shoppingCatalog.js).
+ *
+ * prevConv is the conversation as it stood before this turn: a reset such as "start over" builds a
+ * brand new conversation object (via createConversation()) that already has no memory of having
+ * navigated anywhere, so prevConv is what lets a stale filter actually get cleared in that case.
+ */
+function syncPageWithConversation(env, prevConv, conv) {
+    let next = conv;
+    const s = conv.slots || {};
+    const wasOnCategoryPage = Boolean(prevConv && prevConv.lastNavigatedCategory);
+    if (!s.category) {
+        if (wasOnCategoryPage && env.setVoiceFilter) env.setVoiceFilter(null);
+        if (next.lastNavigatedCategory) next = { ...next, lastNavigatedCategory: null };
+    } else {
+        if (env.setVoiceFilter) {
+            env.setVoiceFilter({ category: s.category, type: s.type, brand: s.brand, color: s.color, size: s.size, budgetMax: s.budgetMax, budgetMin: s.budgetMin });
+        }
+        if (env.navigate && next.lastNavigatedCategory !== s.category) {
+            env.navigate(`/categories/${s.category}`);
+            next = { ...next, lastNavigatedCategory: s.category };
+        }
+    }
+    if (conv.productId && conv.productId !== next.lastNavigatedProductId) {
+        if (env.navigate) env.navigate(`/product/${conv.productId}`);
+        next = { ...next, lastNavigatedProductId: conv.productId };
+    } else if (!conv.productId && next.lastNavigatedProductId) {
+        next = { ...next, lastNavigatedProductId: null };
+    }
+    return next;
+}
+
+async function zoroTurnCore(text, conv, env, heard = {}) {
     const t = normalizeSpeech(text).replace(/\b(hey zoro|zoro)\b/g, "").replace(/\s+/g, " ").trim();
     if (!t) return notUnderstood(conv, "Sorry, I didn't catch that. Please say it again.", conv.lastExpect, conv.lastChoices);
 
@@ -572,6 +625,7 @@ async function addSelected(conv, env) {
         return askConfirm(conv, { kind: "product" }, "Sorry, I couldn't add it to your cart, so nothing was added. Shall I try again?");
     }
     const option = [conv.selected.color, conv.selected.size && (/gb$/i.test(conv.selected.size) ? conv.selected.size : `size ${conv.selected.size}`)].filter(Boolean).join(", ");
+    if (env.navigate) env.navigate("/cart");
     const kept = { ...endWorkflow(conv), workflow: "afterAdd", guestChosen: conv.guestChosen, history: [] };
     return askStep(kept, "afterAdd",
         `Added ${quantity > 1 ? `${quantity} of ` : ""}${product.name}${option ? `, ${option},` : ""} to your cart. Would you like to keep shopping, or check out?`,
@@ -1108,7 +1162,7 @@ async function continueAsGuest(conv, env) {
     const deferred = conv.deferred;
     const next = { ...endWorkflow(conv), guestChosen: true };
     const lead = "Okay, you can keep browsing as a guest. Your cart is saved on this device.";
-    if (deferred) return withPrefix(lead, await zoroTurn(deferred, next, env));
+    if (deferred) return withPrefix(lead, await zoroTurnCore(deferred, next, env));
     return respond(next, `${lead} What would you like to shop for?`);
 }
 

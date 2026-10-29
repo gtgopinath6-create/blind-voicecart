@@ -1,6 +1,6 @@
 import React, { useEffect, useReducer, useRef, useContext, useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TTSContext, ThemeContext, SearchContext, UserContext } from '../App';
+import { TTSContext, ThemeContext, SearchContext, VoiceFilterContext, UserContext } from '../App';
 import { executeAction, resolvePending } from '../services/voiceActions';
 import { loadCatalog, loadCategory } from '../services/catalogService';
 import { interpretCommand } from '../services/groqVoiceService';
@@ -10,10 +10,13 @@ import {
     speakText, cancelSpeech, announce, changeSpeechRate, getSpeechRate, setSpeechRate, setAssistantBusy, NORMAL_RATE,
     watchVoices, subscribeVoices, englishVoices, getChosenVoice, setChosenVoice, resetVoice,
 } from '../services/announcer';
-import { getRecognitionClass, startRecognitionSession, recognitionProblem } from '../services/speechInput';
+import {
+    getRecognitionClass, startRecognitionSession, recognitionProblem,
+    startWhisperSession, whisperCaptureSupported, transcriptionProblem,
+} from '../services/speechInput';
 import {
     SPEECH_LANGUAGES, getSpeechLanguage, setSpeechLanguage, PAUSE_OPTIONS, getListeningPause, setListeningPause, pauseMs,
-    isZoroMuted, setZoroMuted,
+    isZoroMuted, setZoroMuted, STT_ENGINES, getSttEngine, setSttEngine, sttEngineOverridden,
 } from '../services/speechSettings';
 import { addToCart } from '../services/cartStore';
 import { apiRequest } from '../services/apiClient';
@@ -72,6 +75,22 @@ const languageLabel = (code) => (SPEECH_LANGUAGES.find((l) => l.code === code) |
 const SOURCE_LABEL = { voice: 'You said', typed: 'You typed', button: 'You chose' };
 
 /**
+ * Which capture engine runs for a given mode: "Hey Zoro" wake-word listening always needs the
+ * browser's own continuous recognition (there is no Whisper equivalent of listening passively), so
+ * mode "wake" never uses Whisper. Command mode (mic button, Alt+V, a command right after the wake
+ * word) honours the shopper's setting, falling back to whichever engine this browser actually has
+ * rather than going silent when the preferred one is unavailable here.
+ */
+function pickEngine(mode, setting, hasWebSpeech, hasWhisper) {
+    if (mode === 'wake') return hasWebSpeech ? 'webspeech' : null;
+    if (setting === 'webspeech' && hasWebSpeech) return 'webspeech';
+    if (setting === 'whisper' && hasWhisper) return 'whisper';
+    if (hasWebSpeech) return 'webspeech';
+    if (hasWhisper) return 'whisper';
+    return null;
+}
+
+/**
  * Recognition picking up Zoro's own sentence (speakers near the microphone): a long stretch of
  * what Zoro just said. Short answers that repeat an offered option ("email and password",
  * "yes, place order") are real answers and are kept.
@@ -96,13 +115,14 @@ export default function GlobalAIVoiceAssistant() {
     const { screenReader, changeScreenReader } = useContext(TTSContext);
     const { theme, chooseTheme } = useContext(ThemeContext);
     const { setValueToBeSearched } = useContext(SearchContext);
+    const { setVoiceFilter } = useContext(VoiceFilterContext);
 
     const [state, dispatch] = useReducer(voiceReducer, initialVoiceState);
     const stateRef = useRef(state);
     stateRef.current = state;
 
     const ctxRef = useRef({});
-    ctxRef.current = { navigate, user, screenReader, changeScreenReader, theme, chooseTheme, setValueToBeSearched };
+    ctxRef.current = { navigate, user, screenReader, changeScreenReader, theme, chooseTheme, setValueToBeSearched, setVoiceFilter };
 
     // The conversation (memory only; reset when Zoro is turned off).
     const convRef = useRef(createConversation());
@@ -111,12 +131,14 @@ export default function GlobalAIVoiceAssistant() {
     const lastSpokenRef = useRef(null);
     const baseMessageRef = useRef('');       // the last reply, without "repeat" or setting notes
 
-    const recognitionRef = useRef(null);     // { controller, mode, lang, startedAt }
+    const recognitionRef = useRef(null);     // { controller, mode, lang, engine, startedAt }
     const permissionDeniedRef = useRef(false);
     const [micBlocked, setMicBlocked] = useState(false);
     const [micLive, setMicLive] = useState(false);
-    const supported = Boolean(getRecognitionClass());
-    // Typing only: no recognition in this browser, or it cannot be used (language, service, repeated errors).
+    const hasWebSpeech = Boolean(getRecognitionClass());
+    const hasWhisper = whisperCaptureSupported();
+    const supported = hasWebSpeech || hasWhisper;
+    // Typing only: no recognition engine works in this browser, or none can be used (language, service, repeated errors).
     const [typingOnly, setTypingOnlyState] = useState(!supported);
     const typingOnlyRef = useRef(!supported);
     const setTypingOnly = (value) => { typingOnlyRef.current = value; setTypingOnlyState(value); };
@@ -132,6 +154,7 @@ export default function GlobalAIVoiceAssistant() {
     const [pause, setPause] = useState(getListeningPause);
     const [muted, setMutedState] = useState(isZoroMuted);
     const mutedRef = useRef(muted);
+    const [sttChoice, setSttChoiceState] = useState(getSttEngine);
     const [voiceChoice, setVoiceChoice] = useState(getChosenVoice);
     const [voiceOptions, setVoiceOptions] = useState([]);
     const [resumable, setResumable] = useState(null);   // { message, chunks } of a reply stopped part-way
@@ -178,16 +201,15 @@ export default function GlobalAIVoiceAssistant() {
     }, [stopRecognition]);
 
     const startRecognition = useCallback((mode) => {
-        const Recognition = getRecognitionClass();
-        if (!Recognition || permissionDeniedRef.current || typingOnlyRef.current) return;
+        if (permissionDeniedRef.current || typingOnlyRef.current) return;
+        const engine = pickEngine(mode, getSttEngine(), hasWebSpeech, hasWhisper);
+        if (!engine) return;
         stopRecognition();
 
         const lang = getSpeechLanguage();
-        const session = { mode, lang, pause: getListeningPause(), controller: null, startedAt: Date.now() };
-        session.controller = startRecognitionSession(Recognition, {
-            lang,
-            mode: mode === 'wake' ? 'wake' : 'command',
-            pauseMs: pauseMs(),
+        const session = { mode, lang, engine, pause: getListeningPause(), controller: null, startedAt: Date.now() };
+        const problemFor = (code) => (engine === 'whisper' ? transcriptionProblem(code) : recognitionProblem(code, languageLabel(lang)));
+        const handlers = {
             onAudio: (on) => { if (recognitionRef.current === session) setMicLive(on); },
             onInterim: (text) => { if (recognitionRef.current === session && text) dispatch({ type: 'INTERIM', text }); },
             onUtterance: ({ text, alternatives, confidence }) => {
@@ -212,7 +234,7 @@ export default function GlobalAIVoiceAssistant() {
             },
             onError: (code) => {
                 if (recognitionRef.current !== session) return;
-                const problem = recognitionProblem(code, languageLabel(lang));
+                const problem = problemFor(code);
                 if (!problem) return; // silence: the session ends and listening restarts
                 if (problem.kind === 'blocked') {
                     permissionDeniedRef.current = true;
@@ -241,7 +263,7 @@ export default function GlobalAIVoiceAssistant() {
                     switchToTyping("I couldn't keep the microphone on. You can type to me in the box below, or turn me off and on to try again.");
                     return;
                 }
-                // Browsers end a recognition session after silence; keep listening while the
+                // Sessions end after silence (or one Whisper utterance); keep listening while the
                 // conversation is active (the two-minute inactivity rule ends it). Repeated failures wait longer.
                 const backoff = Math.max(1, quickEndsRef.current, errorCountRef.current * 2);
                 setTimeout(() => {
@@ -251,27 +273,38 @@ export default function GlobalAIVoiceAssistant() {
                     else if (mode !== 'wake' && (status === S.COMMAND_LISTENING || status === S.AWAITING_CONFIRMATION)) startRecognition('command');
                 }, RESTART_DELAY_MS * backoff);
             },
-        });
+        };
+
+        session.controller = engine === 'webspeech'
+            ? startRecognitionSession(getRecognitionClass(), { lang, mode: mode === 'wake' ? 'wake' : 'command', pauseMs: pauseMs(), ...handlers })
+            : startWhisperSession(handlers);
         recognitionRef.current = session;
 
-        try {
-            session.controller.rec.start();
-        } catch (e) {
-            recognitionRef.current = null;
-            dispatch({ type: 'ERROR', message: 'Could not start the microphone.' });
+        // Web Speech sessions are started explicitly (and may throw synchronously); a Whisper
+        // session starts itself (getUserMedia + MediaRecorder) inside startWhisperSession.
+        if (session.controller.rec) {
+            try {
+                session.controller.rec.start();
+            } catch (e) {
+                recognitionRef.current = null;
+                dispatch({ type: 'ERROR', message: 'Could not start the microphone.' });
+            }
         }
-    }, [stopRecognition, switchToTyping]);
+    }, [stopRecognition, switchToTyping, hasWebSpeech, hasWhisper]);
 
-    // Recognition runs only while listening, in the mode, language and pause setting that match.
+    // Recognition runs only while listening, in the mode, language, pause and engine that match.
     useEffect(() => {
         const wanted = !voiceOn || !LISTENING_STATES.includes(state.status) ? null : state.status === S.WAKE_WORD_LISTENING ? 'wake' : 'command';
         const current = recognitionRef.current;
         if (!wanted) {
             if (current) stopRecognition();
-        } else if (!current || current.mode !== wanted || current.lang !== language || current.pause !== pause) {
-            startRecognition(wanted);
+        } else {
+            const engine = pickEngine(wanted, sttChoice, hasWebSpeech, hasWhisper);
+            if (!current || current.mode !== wanted || current.lang !== language || current.pause !== pause || current.engine !== engine) {
+                startRecognition(wanted);
+            }
         }
-    }, [state.status, startRecognition, stopRecognition, voiceOn, language, pause]);
+    }, [state.status, startRecognition, stopRecognition, voiceOn, language, pause, sttChoice, hasWebSpeech, hasWhisper]);
 
     // Two minutes without activity: pause, release the microphone, keep the conversation.
     useEffect(() => {
@@ -338,6 +371,7 @@ export default function GlobalAIVoiceAssistant() {
             navigate: (path) => ctxRef.current.navigate(path),
             goBack: () => ctxRef.current.navigate(-1),
             setSearch: (value) => ctxRef.current.setValueToBeSearched(value),
+            setVoiceFilter: (filter) => ctxRef.current.setVoiceFilter(filter),
             toggleContrast: () => ctxRef.current.chooseTheme(ctxRef.current.theme === 'noir' ? 'ivory' : 'noir'),
             toggleScreenReader: () => ctxRef.current.changeScreenReader(!ctxRef.current.screenReader),
         };
@@ -349,6 +383,7 @@ export default function GlobalAIVoiceAssistant() {
             legacyRun: (action, products) => executeAction(action, legacyCtx, products),
             legacyResolve: (pending, said) => resolvePending(pending, said, legacyCtx),
             navigate: (path) => ctxRef.current.navigate(path),
+            setVoiceFilter: (filter) => ctxRef.current.setVoiceFilter(filter),
             setSpeechRate: (change) => setSpeed(speedFor(changeSpeechRate(change))),
             setMuted: applyMuted,
             addToCart: (item, quantity) => addToCart(item, c.user, quantity),
@@ -576,6 +611,11 @@ export default function GlobalAIVoiceAssistant() {
         markActivity();
     };
 
+    const changeSttChoice = (value) => {
+        setSttChoiceState(setSttEngine(value));
+        markActivity();
+    };
+
     const submitTyped = (event) => {
         event.preventDefault();
         const text = typed.trim();
@@ -699,15 +739,25 @@ export default function GlobalAIVoiceAssistant() {
                             <input
                                 type="checkbox"
                                 checked={state.wakeWordMode}
-                                disabled={!voiceOn}
+                                disabled={!voiceOn || !hasWebSpeech}
                                 onChange={(e) => dispatch({ type: 'SET_WAKE_WORD_MODE', enabled: e.target.checked })}
                                 aria-describedby="zoro-wake-note"
                             />
                             <span>Listen for "{WAKE_PHRASE}" while this tab is open</span>
                         </label>
                         <p id="zoro-wake-note" className="assistant__note">
-                            The microphone stays on until you turn this off.
+                            {hasWebSpeech
+                                ? 'The microphone stays on until you turn this off.'
+                                : "This browser can't listen passively for \"" + WAKE_PHRASE + '". Use the microphone button or Alt+V instead.'}
                         </p>
+                        {hasWebSpeech && hasWhisper && !sttEngineOverridden ? (
+                            <label className="assistant__speed">
+                                <span>Voice recognition</span>
+                                <select value={sttChoice} onChange={(e) => changeSttChoice(e.target.value)}>
+                                    {STT_ENGINES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                </select>
+                            </label>
+                        ) : null}
                         <label className="assistant__speed">
                             <span>Language I listen for</span>
                             <select value={language} onChange={(e) => changeLanguage(e.target.value)} aria-describedby="zoro-privacy-note">
@@ -734,8 +784,9 @@ export default function GlobalAIVoiceAssistant() {
                             </select>
                         </label>
                         <p id="zoro-privacy-note" className="assistant__note assistant__note--flush">
-                            Your browser turns speech into text: Chrome sends your voice to Google, Edge to Microsoft and Safari to Apple.
-                            Zoro never records or keeps audio, and passwords are always typed, never spoken.
+                            Speech becomes text either in your browser (Chrome sends it to Google, Edge to Microsoft, Safari to Apple) or,
+                            when that isn't available or you choose it, by uploading one spoken command to our server to transcribe.
+                            Either way, audio is not kept afterwards, and passwords are always typed, never spoken.
                         </p>
                     </details>
                 </section>
@@ -771,7 +822,7 @@ export default function GlobalAIVoiceAssistant() {
             ) : null}
 
             {!supported && !panelOpen && (
-                <p className="assistant__notice" role="note">Voice input isn't available in this browser (it works in Chrome and Edge). You can still type to Zoro: press the button below or Alt+V.</p>
+                <p className="assistant__notice" role="note">Voice input isn't available in this browser. You can still type to Zoro: press the button below or Alt+V.</p>
             )}
 
             <button

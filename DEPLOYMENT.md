@@ -198,6 +198,10 @@ curl -s -X POST "$H/api/wallet/refill" -H "Authorization: Bearer $TOKEN" -H 'Con
 for i in $(seq 1 31); do curl -s -o /dev/null -w '%{http_code} ' -X POST "$H/api/voice/intent" -H 'Content-Type: application/json' -d '{"text":"open shoes","products":[]}'; done; echo
 # Expect no 429 in the first 30, and 429 on the 31st. Then, within a minute:
 curl -s -o /dev/null -w '%{http_code}\n' -X POST "$H/api/voice/intent" -H 'X-Forwarded-For: 203.0.113.9' -H 'Content-Type: application/json' -d '{"text":"hi","products":[]}'   # still 429: a fake header can't bypass the limit
+
+# /api/voice/transcribe (Whisper) is limited tighter: 15/minute, not 30.
+for i in $(seq 1 16); do curl -s -o /dev/null -w '%{http_code} ' -X POST "$H/api/voice/transcribe" -H 'Content-Type: audio/webm' --data-binary $'\x00'; done; echo
+# Expect no 429 in the first 15, and 429 on the 16th.
 ```
 
 From a different network, for example a phone hotspot, the first request must **not** get 429. If it does, all users share one IP as far as the server can tell: raise `TRUST_PROXY` by one and redeploy. If the fake-header request is not 429, lower it.

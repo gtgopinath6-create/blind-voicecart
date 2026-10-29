@@ -21,6 +21,8 @@ function loadConfig(env = process.env) {
     groqApiKey: (env.GROQ_API_KEY || '').trim(),
     groqModel: (env.GROQ_MODEL || 'openai/gpt-oss-120b').trim(),
     groqReasoningEffort: (env.GROQ_REASONING_EFFORT || 'low').trim(),
+    // Whisper model for /api/voice/transcribe; reuses GROQ_API_KEY.
+    groqWhisperModel: (env.GROQ_WHISPER_MODEL || 'whisper-large-v3-turbo').trim(),
     firebaseProjectId: (env.FIREBASE_PROJECT_ID || '').trim(),
     // Test money without a payment provider. Only honoured outside production AND against the
     // Firestore emulator, so it can never credit a real (staging or production) database.

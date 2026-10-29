@@ -15,6 +15,7 @@
  *                 understand an answer that is read back before anything happens;
  *   confidence:   the lowest confidence the browser reported (0 to 1), or null when it reported none.
  */
+import { uploadAudio } from "./apiClient";
 
 /** Browsers name it differently (Chrome and Safari use the webkit prefix). */
 export function getRecognitionClass() {
@@ -194,6 +195,252 @@ export function startRecognitionSession(Recognition, { lang, mode = "command", p
             rec.onaudiostart = null;
             rec.onaudioend = null;
             try { rec.abort(); } catch (e) { /* already stopped */ }
+        },
+    };
+}
+
+/**
+ * Zoro's microphone input via server-side transcription (Groq Whisper), used for command mode only
+ * (mic button, Alt+V, or a spoken command right after "Hey Zoro"). "Hey Zoro" itself always needs
+ * the browser's own continuous recognition (startRecognitionSession above) to listen passively, so
+ * this is never used for mode "wake".
+ *
+ * One utterance: record from the microphone, detect when the shopper stops talking by audio level
+ * (there is no server round trip until recording ends), then upload the clip and transcribe it.
+ * The result is delivered through the same onUtterance({ text, alternatives, confidence }) shape as
+ * startRecognitionSession, so nothing downstream (voiceMachine, zoroDialogue, voiceActions) needs to
+ * know which engine produced the text.
+ */
+
+/** Whisper reports no per-word confidence; this fixed value is well above LOW_CONFIDENCE (0.5) in
+ * zoroDialogue.js, so a correctly transcribed short answer is not needlessly asked again. It is a
+ * guess, not a measurement: a genuinely low-confidence Whisper transcription still looks confident. */
+export const WHISPER_CONFIDENCE = 0.9;
+
+/** One recorded utterance never runs longer than this before it is sent for transcription. */
+export const MAX_WHISPER_UTTERANCE_MS = 12000;
+/** How long of silence, after speech was heard, ends the recording. */
+const WHISPER_SILENCE_MS = 1200;
+/** Nothing heard at all within this long: give up quietly, like the Web Speech API's "no-speech". */
+const WHISPER_NO_SPEECH_MS = 6000;
+/** 0-255 input level (MediaStreamTrack mic gain varies by device) above which audio counts as speech. */
+const WHISPER_VOICE_LEVEL = 12;
+/** How often the microphone's volume is sampled to detect speech and silence. */
+const WHISPER_POLL_MS = 100;
+
+const WHISPER_MIME_CANDIDATES = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+
+function pickWhisperMimeType() {
+    const supported = typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported;
+    if (!supported) return "";
+    return WHISPER_MIME_CANDIDATES.find((t) => MediaRecorder.isTypeSupported(t)) || "";
+}
+
+/** True when this browser can record and upload audio for Whisper transcription. */
+export function whisperCaptureSupported() {
+    return Boolean(
+        typeof navigator !== "undefined" && navigator.mediaDevices && navigator.mediaDevices.getUserMedia &&
+        typeof MediaRecorder !== "undefined"
+    );
+}
+
+/** getUserMedia/MediaRecorder failures, in the vocabulary transcriptionProblem() understands. */
+function mediaErrorCode(e) {
+    switch (e && e.name) {
+        case "NotAllowedError":
+        case "SecurityError":
+            return "not-allowed";
+        case "NotFoundError":
+        case "NotReadableError":
+            return "audio-capture";
+        default:
+            return "other";
+    }
+}
+
+/** An uploaded-transcription failure (apiClient's ApiError codes), in the same vocabulary. */
+function uploadErrorCode(e) {
+    const code = e && e.code;
+    if (code === "network" || code === "timeout") return "network";
+    if (code === "ai_not_configured") return "not-configured";
+    if (code === "ai_rate_limited" || code === "ai_unavailable") return "unavailable";
+    return "other";
+}
+
+/**
+ * Plain-language messages for Whisper capture/upload problems, in the same { kind, fatal, counts,
+ * reason, message } shape as recognitionProblem() (see GlobalAIVoiceAssistant.js's onError, which
+ * handles both the same way). "no speech at all" ends quietly without calling this, like the Web
+ * Speech API's "no-speech".
+ */
+export function transcriptionProblem(code) {
+    switch (code) {
+        case "not-allowed":
+            return { kind: "blocked", fatal: true, message: "Microphone access is blocked. Allow the microphone for this site in your browser settings, then press the microphone button again. You can also type to Zoro." };
+        case "audio-capture":
+            return { kind: "microphone", counts: true, reason: "I can't hear a microphone", message: "I can't hear a microphone. Check that one is connected and not being used by another app." };
+        case "network":
+            return { kind: "network", counts: true, reason: "the connection to the transcription service failed", message: "Could not reach the server to transcribe your voice. Check your connection, or type to Zoro." };
+        case "not-configured":
+            return { kind: "service", fatal: true, message: "Voice transcription isn't set up on this server, so Zoro can't listen here. You can type to Zoro instead." };
+        case "unavailable":
+            return { kind: "other", counts: true, reason: "the voice transcription service is unavailable", message: "The voice transcription service is busy or unavailable right now. Please try again, or type to Zoro." };
+        default:
+            return { kind: "other", counts: true, reason: "voice transcription reported a problem", message: "Voice input had a problem. Please try again, or type to Zoro." };
+    }
+}
+
+/**
+ * Starts one Whisper recording session and returns { rec: null, stop(), abort() }, matching the
+ * shape startRecognitionSession returns so the caller does not need to branch on which engine ran.
+ * mode is always "command": only one utterance is ever delivered, then the session ends.
+ */
+export function startWhisperSession({
+    onUtterance, onInterim, onAudio, onError, onEnd,
+    silenceMs = WHISPER_SILENCE_MS, noSpeechMs = WHISPER_NO_SPEECH_MS, maxMs = MAX_WHISPER_UTTERANCE_MS,
+    voiceLevel = WHISPER_VOICE_LEVEL, pollMs = WHISPER_POLL_MS,
+} = {}) {
+    let closed = false;
+    let stream = null;
+    let audioCtx = null;
+    let recorder = null;
+    let chunks = [];
+    let silenceTimer = null;
+    let noSpeechTimer = null;
+    let maxTimer = null;
+    let pollTimer = null;
+    let heardVoice = false;
+    let endedReported = false;
+
+    const clearTimers = () => {
+        clearTimeout(silenceTimer);
+        clearTimeout(noSpeechTimer);
+        clearTimeout(maxTimer);
+        clearInterval(pollTimer);
+        silenceTimer = null;
+        noSpeechTimer = null;
+        maxTimer = null;
+        pollTimer = null;
+    };
+
+    const teardownMedia = () => {
+        if (stream) stream.getTracks().forEach((t) => t.stop());
+        stream = null;
+        if (audioCtx) { try { audioCtx.close(); } catch (e) { /* already closed */ } }
+        audioCtx = null;
+    };
+
+    const finish = ({ heardAudio }) => {
+        if (endedReported) return;
+        endedReported = true;
+        clearTimers();
+        teardownMedia();
+        if (onAudio) onAudio(false);
+        if (onEnd) onEnd({ heardAudio });
+    };
+
+    async function upload(blob) {
+        if (closed) return;
+        try {
+            const { text } = await uploadAudio(blob);
+            if (closed) return;
+            const trimmed = (text || "").trim();
+            if (trimmed && onUtterance) onUtterance({ text: trimmed, alternatives: [trimmed], confidence: WHISPER_CONFIDENCE });
+        } catch (e) {
+            if (!closed && onError) onError(uploadErrorCode(e));
+        } finally {
+            finish({ heardAudio: heardVoice });
+        }
+    }
+
+    function stopRecording() {
+        clearTimers();
+        if (recorder && recorder.state !== "inactive") {
+            try { recorder.stop(); } catch (e) { finish({ heardAudio: heardVoice }); }
+        } else {
+            finish({ heardAudio: heardVoice });
+        }
+    }
+
+    (async () => {
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (e) {
+            if (onError) onError(mediaErrorCode(e));
+            finish({ heardAudio: false });
+            return;
+        }
+        if (closed) { teardownMedia(); return; }
+
+        const mimeType = pickWhisperMimeType();
+        try {
+            recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        } catch (e) {
+            if (onError) onError("other");
+            finish({ heardAudio: false });
+            return;
+        }
+        recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+        recorder.onstop = () => {
+            const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" });
+            chunks = [];
+            if (!heardVoice || blob.size === 0) { finish({ heardAudio: heardVoice }); return; }
+            upload(blob);
+        };
+        recorder.start();
+        if (onAudio) onAudio(true);
+
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        const analyser = (() => {
+            try {
+                audioCtx = new AudioCtx();
+                const source = audioCtx.createMediaStreamSource(stream);
+                const node = audioCtx.createAnalyser();
+                node.fftSize = 512;
+                source.connect(node);
+                return node;
+            } catch (e) {
+                return null; // Volume detection unavailable; the max-duration cap still ends the recording.
+            }
+        })();
+
+        noSpeechTimer = setTimeout(() => {
+            if (!heardVoice) stopRecording(); // nothing said at all: end quietly, like "no-speech"
+        }, noSpeechMs);
+        maxTimer = setTimeout(stopRecording, maxMs);
+
+        if (analyser) {
+            const data = new Uint8Array(analyser.frequencyBinCount);
+            pollTimer = setInterval(() => {
+                if (closed || !audioCtx) return;
+                analyser.getByteTimeDomainData(data);
+                let sum = 0;
+                for (let i = 0; i < data.length; i++) sum += Math.abs(data[i] - 128);
+                const level = sum / data.length;
+                if (level >= voiceLevel) {
+                    if (!heardVoice) {
+                        heardVoice = true;
+                        clearTimeout(noSpeechTimer);
+                        noSpeechTimer = null;
+                    }
+                    clearTimeout(silenceTimer);
+                    silenceTimer = setTimeout(stopRecording, silenceMs);
+                }
+            }, pollMs);
+        }
+    })();
+
+    return {
+        rec: null,
+        stop: stopRecording,
+        abort() {
+            closed = true;
+            clearTimers();
+            if (recorder && recorder.state !== "inactive") {
+                recorder.onstop = null;
+                try { recorder.stop(); } catch (e) { /* already stopped */ }
+            }
+            teardownMedia();
         },
     };
 }

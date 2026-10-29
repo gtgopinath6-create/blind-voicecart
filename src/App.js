@@ -37,6 +37,14 @@ export const SearchContext = React.createContext({
   setValueToBeSearched: () => {},
 })
 
+// What Zoro's shopping conversation has learned so far (category/type/brand/colour/size/budget),
+// so a category page can narrow its listing to match as the conversation progresses, the same way
+// SearchContext lets typed search override it. null means no voice filter is active.
+export const VoiceFilterContext = React.createContext({
+  voiceFilter: null,
+  setVoiceFilter: () => {},
+})
+
 export const TTSContext = React.createContext({})
 
 // Noir Prestige is the default theme and "ivory" the light alternative. The switch in the header
@@ -141,6 +149,7 @@ function MainPage() {
   const [authReady, setAuthReady] = useState(false);
   const [orderTotal, setOrderTotal] = useState(0);
   const [valueToBeSearched, setValueToBeSearched] = useState("");
+  const [voiceFilter, setVoiceFilter] = useState(null);
   const [screenReader, changeScreenReader] = useState(true);
   const [theme, setTheme] = useState(initialTheme);
 
@@ -226,13 +235,15 @@ function MainPage() {
     <UserContext.Provider value={{ user, setUser, isAdmin, authReady }}>
       <OrderContext.Provider value = {{orderTotal, setOrderTotal}}>
         <SearchContext.Provider value = {{valueToBeSearched, setValueToBeSearched}}>
-          <TTSContext.Provider value={{screenReader, changeScreenReader}}>
-            <ThemeContext.Provider value={{ theme, chooseTheme }}>
-              <BrowserRouter>
-                <SiteFrame />
-              </BrowserRouter>
-            </ThemeContext.Provider>
-          </TTSContext.Provider>
+          <VoiceFilterContext.Provider value={{ voiceFilter, setVoiceFilter }}>
+            <TTSContext.Provider value={{screenReader, changeScreenReader}}>
+              <ThemeContext.Provider value={{ theme, chooseTheme }}>
+                <BrowserRouter>
+                  <SiteFrame />
+                </BrowserRouter>
+              </ThemeContext.Provider>
+            </TTSContext.Provider>
+          </VoiceFilterContext.Provider>
         </SearchContext.Provider>
       </OrderContext.Provider>
     </UserContext.Provider>

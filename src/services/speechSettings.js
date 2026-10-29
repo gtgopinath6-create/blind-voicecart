@@ -78,6 +78,41 @@ export function setListeningPause(value) {
 
 export const pauseMs = (value = pause) => (PAUSE_OPTIONS.find((p) => p.value === value) || PAUSE_OPTIONS[1]).ms;
 
+/**
+ * Which speech-to-text engine transcribes a spoken command (not the "Hey Zoro" wake word, which
+ * always needs the browser's own continuous recognition and has no Whisper equivalent):
+ *   "automatic": the browser's own recognition (Web Speech API) when this browser has it, else Whisper.
+ *   "webspeech": always the browser's own recognition; command mode falls back to typing where unsupported.
+ *   "whisper":   always upload the recording to the server's Whisper endpoint, even where Web Speech API exists.
+ * REACT_APP_VOICE_STT_MODE overrides this app-wide (for rollout testing), taking the same three values.
+ */
+export const STT_ENGINES = [
+    { value: "automatic", label: "Automatic (recommended)" },
+    { value: "webspeech", label: "This browser's speech recognition" },
+    { value: "whisper", label: "Server transcription (Whisper)" },
+];
+const STT_KEY = "vc-stt-engine";
+const sttOverride = (process.env.REACT_APP_VOICE_STT_MODE || "").trim().toLowerCase();
+/** True when REACT_APP_VOICE_STT_MODE forces one engine app-wide, so the per-device choice is moot. */
+export const sttEngineOverridden = STT_ENGINES.some((e) => e.value === sttOverride);
+let sttEngine = (() => {
+    if (STT_ENGINES.some((e) => e.value === sttOverride)) return sttOverride;
+    const saved = read(STT_KEY);
+    return STT_ENGINES.some((e) => e.value === saved) ? saved : "automatic";
+})();
+
+export function getSttEngine() {
+    return sttEngine;
+}
+
+export function setSttEngine(value) {
+    // An app-wide override always wins, so a stored per-device choice can't fight a rollout setting.
+    if (STT_ENGINES.some((e) => e.value === sttOverride)) return sttOverride;
+    sttEngine = STT_ENGINES.some((e) => e.value === value) ? value : "automatic";
+    write(STT_KEY, sttEngine === "automatic" ? null : sttEngine);
+    return sttEngine;
+}
+
 /** Zoro's spoken replies muted (they are still shown, and read by a native screen reader). */
 const MUTE_KEY = "vc-zoro-muted";
 let muted = read(MUTE_KEY) === "true";
@@ -97,4 +132,5 @@ export function resetSpeechSettingsForTests() {
     language = DEFAULT_LANGUAGE;
     pause = "normal";
     muted = false;
+    sttEngine = STT_ENGINES.some((e) => e.value === sttOverride) ? sttOverride : "automatic";
 }
