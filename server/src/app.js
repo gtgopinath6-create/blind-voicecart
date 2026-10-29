@@ -1,6 +1,7 @@
 const express = require('express');
 const { HttpError, asyncRoute, authenticate, requireAdmin, rateLimit } = require('./http');
 const { parseVoiceRequest, classifyWithGroq } = require('./voice');
+const { transcribeWithGroqWhisper } = require('./transcribe');
 const { placeOrder, quoteCart } = require('./checkout');
 const { requestRefill } = require('./wallet');
 const { createUser, setUserDisabled, deleteUser } = require('./adminUsers');
@@ -59,6 +60,36 @@ function createApp({ config, firebase = null, fetchImpl = fetch }) {
       const input = parseVoiceRequest(req.body);
       const action = await classifyWithGroq(input, { apiKey: config.groqApiKey, model: config.groqModel, reasoningEffort: config.groqReasoningEffort, fetchImpl });
       res.json({ action });
+    })
+  );
+
+  // One recorded utterance, uploaded as raw audio (not JSON). Mounted only on this route so the
+  // 32kb JSON limit above stays tight for every other endpoint. The size cap is a byte budget for
+  // one short command, not a general file upload allowance.
+  const audioBody = express.raw({
+    type: ['audio/webm', 'audio/ogg', 'audio/wav', 'audio/wave', 'audio/mpeg', 'audio/mp4', 'audio/x-m4a'],
+    limit: '4mb',
+  });
+
+  // Guests may use the mic too; rate limited per user/IP, tighter than text intent since
+  // transcription is slower and costlier per request.
+  app.post(
+    '/api/voice/transcribe',
+    audioBody,
+    authenticate(auth, { required: false }),
+    rateLimit({ windowMs: 60 * 1000, max: 15 }),
+    asyncRoute(async (req, res) => {
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+        throw new HttpError(400, 'invalid_input', 'No audio was received.');
+      }
+      const { text } = await transcribeWithGroqWhisper({
+        audio: req.body,
+        mimeType: req.get('content-type'),
+        apiKey: config.groqApiKey,
+        model: config.groqWhisperModel,
+        fetchImpl,
+      });
+      res.json({ text });
     })
   );
 

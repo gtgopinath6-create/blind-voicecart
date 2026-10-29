@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { createApp } = require('../../src/app');
 const { loadConfig } = require('../../src/config');
 const { normalizeAction, parseVoiceRequest } = require('../../src/voice');
+const { transcribeWithGroqWhisper } = require('../../src/transcribe');
 const { validateShipping, validateRefillAmount, isValidIdempotencyKey } = require('../../src/validation');
 const { rateLimit, requireAdmin } = require('../../src/http');
 
@@ -20,10 +21,19 @@ async function withServer(app, fn) {
 const post = (url, body, headers = {}) =>
   fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
 
+const postAudio = (url, bytes, headers = {}) =>
+  fetch(url, { method: 'POST', headers: { 'Content-Type': 'audio/webm', ...headers }, body: bytes });
+
 const groqReply = (content, status = 200) => async () => ({
   ok: status === 200,
   status,
   json: async () => ({ choices: [{ message: { content: JSON.stringify(content) } }] }),
+});
+
+const whisperReply = (text, status = 200) => async () => ({
+  ok: status === 200,
+  status,
+  json: async () => ({ text }),
 });
 
 // Fake Admin Auth: token "user" is an ordinary user, "admin" carries the admin claim.
@@ -116,6 +126,77 @@ test('voice endpoint is rate limited', async () => {
     for (let i = 0; i < 32; i++) statuses.push((await post(`${base}/api/voice/intent`, { text: 'hello' })).status);
     assert.equal(statuses.filter((s) => s === 200).length, 30);
     assert.equal(statuses[31], 429);
+  });
+});
+
+test('transcribe: requires a non-empty audio buffer and a configured key', async () => {
+  await assert.rejects(
+    () => transcribeWithGroqWhisper({ audio: Buffer.alloc(0), apiKey: 'k', model: 'whisper-large-v3-turbo' }),
+    /No audio/
+  );
+  await assert.rejects(
+    () => transcribeWithGroqWhisper({ audio: Buffer.from('x'), apiKey: '', model: 'whisper-large-v3-turbo' }),
+    /not configured/
+  );
+});
+
+test('POST /api/voice/transcribe returns the transcript without exposing the key', async () => {
+  let sentAuth = null;
+  const fetchImpl = async (url, init) => {
+    sentAuth = init.headers.Authorization;
+    return whisperReply('add nike air force 1 to my cart')();
+  };
+  const app = createApp({ config: loadConfig({ GROQ_API_KEY: 'secret-whisper-key' }), fetchImpl });
+  await withServer(app, async (base) => {
+    const res = await postAudio(`${base}/api/voice/transcribe`, Buffer.from('fake-audio-bytes'));
+    const text = await res.text();
+    assert.equal(res.status, 200);
+    assert.equal(JSON.parse(text).text, 'add nike air force 1 to my cart');
+    assert.ok(!text.includes('secret-whisper-key'));
+  });
+  assert.equal(sentAuth, 'Bearer secret-whisper-key');
+});
+
+test('transcribe: an empty upload is rejected before calling the AI', async () => {
+  const app = createApp({ config: loadConfig({ GROQ_API_KEY: 'k' }), fetchImpl: async () => { throw new Error('should not be called'); } });
+  await withServer(app, async (base) => {
+    const res = await postAudio(`${base}/api/voice/transcribe`, Buffer.alloc(0));
+    assert.equal(res.status, 400);
+  });
+});
+
+test('transcribe: oversized audio is rejected, provider failures surface, and the key is required', async () => {
+  const tooBig = createApp({ config: loadConfig({ GROQ_API_KEY: 'k' }) });
+  await withServer(tooBig, async (base) => {
+    const res = await postAudio(`${base}/api/voice/transcribe`, Buffer.alloc(5 * 1024 * 1024));
+    assert.equal(res.status, 400);
+  });
+
+  const failing = createApp({ config: loadConfig({ GROQ_API_KEY: 'k' }), fetchImpl: whisperReply('', 500) });
+  await withServer(failing, async (base) => {
+    assert.equal((await postAudio(`${base}/api/voice/transcribe`, Buffer.from('a'))).status, 502);
+  });
+
+  const limited = createApp({ config: loadConfig({ GROQ_API_KEY: 'k' }), fetchImpl: whisperReply('', 429) });
+  await withServer(limited, async (base) => {
+    const res = await postAudio(`${base}/api/voice/transcribe`, Buffer.from('a'));
+    assert.equal(res.status, 503);
+    assert.equal((await res.json()).error.code, 'ai_rate_limited');
+  });
+
+  const noKey = createApp({ config: loadConfig({}) });
+  await withServer(noKey, async (base) => {
+    assert.equal((await postAudio(`${base}/api/voice/transcribe`, Buffer.from('a'))).status, 503);
+  });
+});
+
+test('transcribe endpoint is rate limited tighter than text intent', async () => {
+  const app = createApp({ config: loadConfig({ GROQ_API_KEY: 'k' }), fetchImpl: whisperReply('hi') });
+  await withServer(app, async (base) => {
+    const statuses = [];
+    for (let i = 0; i < 17; i++) statuses.push((await postAudio(`${base}/api/voice/transcribe`, Buffer.from('a'))).status);
+    assert.equal(statuses.filter((s) => s === 200).length, 15);
+    assert.equal(statuses[16], 429);
   });
 });
 

@@ -56,7 +56,10 @@ export const NAV_TARGETS = {
     "/categories/Electronics": ["electronics", "electronic", "gadgets"],
     "/categories/Food": ["food", "snacks", "grocery"],
     "/categories/Clothes": ["clothes", "clothing", "apparel"],
-    "/cart": ["cart", "basket"],
+    // "add to cart page" is deliberately not listed here: it collides with the ADD_TO_CART regex
+    // below ("add ... to cart"), which runs first. The Groq prompt (server/src/voice.js) still
+    // hints at that phrasing for the LLM path, which reasons about the whole sentence instead.
+    "/cart": ["cart", "basket", "shopping cart", "view cart", "my cart", "go to cart"],
     "/wishlist": ["wishlist", "wish list"],
     "/account": ["account", "profile"],
     "/billing": ["billing"],

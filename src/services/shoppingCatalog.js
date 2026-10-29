@@ -18,6 +18,21 @@ export const CATEGORY_WORDS = {
     Food: ["food", "grocery", "groceries"],
 };
 
+/**
+ * The category when the words are only a bare category name or synonym ("shoes", "footwear"),
+ * never a longer query ("nike shoes", "running shoes"). Used so "search shoes" can open the real
+ * category page instead of a generic text search; a query with extra words keeps searching.
+ */
+export function categoryFromExactWords(text) {
+    const said = normalizeText(text);
+    if (!said) return null;
+    return (
+        CATEGORIES.find((c) => normalizeText(c) === said) ||
+        Object.keys(CATEGORY_WORDS).find((c) => CATEGORY_WORDS[c].some((w) => normalizeText(w) === said)) ||
+        null
+    );
+}
+
 /** How shoppers name product types, mapped to catalog sub-categories (category[1]). */
 export const TYPE_WORDS = [
     { words: ["sports", "sport", "athletic"], category: "Shoes", type: "sports" },

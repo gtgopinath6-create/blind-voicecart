@@ -9,6 +9,8 @@ const cases = [
     ["increase the quantity to two", { intent: "SET_QUANTITY", target: null, quantity: 2 }],
     ["set the quantity of chilli chatka to 3", { intent: "SET_QUANTITY", target: "chilli chatka", quantity: 3 }],
     ["open my wishlist", { intent: "NAVIGATE", target: "/wishlist" }],
+    ["open my shopping cart", { intent: "NAVIGATE", target: "/cart" }],
+    ["go to cart", { intent: "NAVIGATE", target: "/cart" }],
     ["tell me my cart total", { intent: "CART_TOTAL" }],
     ["open my account", { intent: "NAVIGATE", target: "/account" }],
     ["proceed to checkout", { intent: "CHECKOUT" }],

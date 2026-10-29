@@ -1,4 +1,10 @@
-import { startRecognitionSession, mergeSegment, recognitionProblem, INTERIM_SETTLE_MS, MAX_UTTERANCE_MS, MAX_ALTERNATIVES } from "../speechInput";
+import {
+    startRecognitionSession, mergeSegment, recognitionProblem, INTERIM_SETTLE_MS, MAX_UTTERANCE_MS, MAX_ALTERNATIVES,
+    startWhisperSession, whisperCaptureSupported, transcriptionProblem, WHISPER_CONFIDENCE,
+} from "../speechInput";
+import { uploadAudio } from "../apiClient";
+
+jest.mock("../apiClient", () => ({ uploadAudio: jest.fn() }));
 
 // A stand-in for the browser's recognition object. Results arrive as in Chrome's continuous mode:
 // one growing list per session, where an interim result is replaced by its final version at the same index.
@@ -200,5 +206,194 @@ test("recognition problems are explained in plain words, never as raw error code
     expect(recognitionProblem("audio-capture")).toMatchObject({ kind: "microphone", counts: true });
     for (const code of ["network", "audio-capture", "bad-grammar", "something-new", "not-allowed"]) {
         expect(recognitionProblem(code).message).not.toMatch(code);
+    }
+});
+
+describe("startWhisperSession (command-mode capture via the server's Whisper endpoint)", () => {
+    const level = { value: 0 }; // simulated microphone input level, read by the fake analyser
+
+    class FakeAnalyser {
+        constructor() { this.frequencyBinCount = 32; }
+        getByteTimeDomainData(arr) { arr.fill(128 + level.value); }
+    }
+    class FakeAudioContext {
+        createMediaStreamSource() { return { connect: () => {} }; }
+        createAnalyser() { return new FakeAnalyser(); }
+        close() { this.closed = true; }
+    }
+
+    let recorders;
+    class FakeMediaRecorder {
+        constructor(stream, options) {
+            this.stream = stream;
+            this.mimeType = (options && options.mimeType) || "";
+            this.state = "inactive";
+            this.ondataavailable = null;
+            this.onstop = null;
+            recorders.push(this);
+        }
+        start() { this.state = "recording"; }
+        // Real recorders flush any buffered audio just before onstop; the fake does the same.
+        stop() {
+            this.state = "inactive";
+            if (this.ondataavailable) this.ondataavailable({ data: new Blob(["x"], { type: "audio/webm" }) });
+            if (this.onstop) this.onstop();
+        }
+    }
+    FakeMediaRecorder.isTypeSupported = (type) => type === "audio/webm;codecs=opus";
+
+    let fakeTrack;
+    let getUserMedia;
+
+    beforeEach(() => {
+        level.value = 0;
+        recorders = [];
+        fakeTrack = { stop: jest.fn() };
+        getUserMedia = jest.fn(async () => ({ getTracks: () => [fakeTrack] }));
+        Object.defineProperty(window.navigator, "mediaDevices", { value: { getUserMedia }, configurable: true, writable: true });
+        window.MediaRecorder = FakeMediaRecorder;
+        window.AudioContext = FakeAudioContext;
+        uploadAudio.mockReset();
+    });
+
+    // Lets pending microtasks (getUserMedia's await, the upload promise) settle between timer advances.
+    const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+
+    function startWhisper(options = {}) {
+        const heard = [];
+        const errors = [];
+        const ends = [];
+        const audio = [];
+        const session = startWhisperSession({
+            onUtterance: (u) => { heard.push(u); return options.accept ? options.accept(u) : true; },
+            onAudio: (on) => audio.push(on),
+            onError: (code) => errors.push(code),
+            onEnd: (info) => ends.push(info),
+            silenceMs: 50, noSpeechMs: 300, maxMs: 2000, pollMs: 10, voiceLevel: 12,
+            ...options,
+        });
+        return { session, heard, errors, ends, audio };
+    }
+
+    test("records until silence follows speech, then uploads and delivers the transcript", async () => {
+        uploadAudio.mockResolvedValue({ text: "open shoes" });
+        const { heard, ends, audio } = startWhisper();
+        await flush();
+        expect(recorders[0].state).toBe("recording");
+        expect(audio).toEqual([true]);
+
+        level.value = 50; // speaking
+        jest.advanceTimersByTime(20);
+        level.value = 0; // silence
+        jest.advanceTimersByTime(100);
+        await flush();
+
+        expect(uploadAudio).toHaveBeenCalledTimes(1);
+        expect(heard).toEqual([{ text: "open shoes", alternatives: ["open shoes"], confidence: WHISPER_CONFIDENCE }]);
+        expect(ends).toEqual([{ heardAudio: true }]);
+        expect(fakeTrack.stop).toHaveBeenCalled(); // the microphone is released afterwards
+    });
+
+    test("nothing said at all ends quietly, like the Web Speech API's no-speech, without uploading", async () => {
+        const { heard, errors, ends } = startWhisper({ noSpeechMs: 100 });
+        await flush();
+        jest.advanceTimersByTime(150);
+        await flush();
+
+        expect(uploadAudio).not.toHaveBeenCalled();
+        expect(heard).toHaveLength(0);
+        expect(errors).toHaveLength(0);
+        expect(ends).toEqual([{ heardAudio: false }]);
+    });
+
+    test("a very long utterance is finished after the limit, even while still speaking", async () => {
+        uploadAudio.mockResolvedValue({ text: "a very long request" });
+        const { heard } = startWhisper({ maxMs: 200 });
+        await flush();
+        level.value = 50; // continuous speech keeps resetting the silence timer, never the max timer
+        jest.advanceTimersByTime(250);
+        await flush();
+
+        expect(heard.map((u) => u.text)).toEqual(["a very long request"]);
+    });
+
+    test("an upload failure is reported with a mapped code, and the session still ends", async () => {
+        uploadAudio.mockRejectedValue(Object.assign(new Error("down"), { code: "network" }));
+        const { heard, errors, ends } = startWhisper();
+        await flush();
+        level.value = 50;
+        jest.advanceTimersByTime(20);
+        level.value = 0;
+        jest.advanceTimersByTime(100);
+        await flush();
+
+        expect(heard).toHaveLength(0);
+        expect(errors).toEqual(["network"]);
+        expect(ends).toEqual([{ heardAudio: true }]);
+    });
+
+    test("microphone permission denied is reported before any recording starts", async () => {
+        getUserMedia.mockRejectedValue(Object.assign(new Error("nope"), { name: "NotAllowedError" }));
+        const { errors, ends } = startWhisper();
+        await flush();
+
+        expect(errors).toEqual(["not-allowed"]);
+        expect(ends).toEqual([{ heardAudio: false }]);
+        expect(recorders).toHaveLength(0);
+    });
+
+    test("aborting releases the microphone without delivering anything or reporting an end", async () => {
+        const { session, heard, ends } = startWhisper();
+        await flush();
+        session.abort();
+
+        expect(fakeTrack.stop).toHaveBeenCalled();
+        expect(heard).toHaveLength(0);
+        expect(ends).toHaveLength(0);
+    });
+
+    test("an empty transcript is not delivered as an utterance", async () => {
+        uploadAudio.mockResolvedValue({ text: "   " });
+        const { heard, ends } = startWhisper();
+        await flush();
+        level.value = 50;
+        jest.advanceTimersByTime(20);
+        level.value = 0;
+        jest.advanceTimersByTime(100);
+        await flush();
+
+        expect(heard).toHaveLength(0);
+        expect(ends).toEqual([{ heardAudio: true }]);
+    });
+});
+
+test("transcription problems are explained in plain words, matching recognitionProblem's shape", () => {
+    expect(transcriptionProblem("not-allowed")).toMatchObject({ kind: "blocked", fatal: true });
+    expect(transcriptionProblem("audio-capture")).toMatchObject({ kind: "microphone", counts: true });
+    expect(transcriptionProblem("network")).toMatchObject({ kind: "network", counts: true });
+    expect(transcriptionProblem("not-configured")).toMatchObject({ kind: "service", fatal: true });
+    expect(transcriptionProblem("unavailable")).toMatchObject({ kind: "other", counts: true });
+    for (const code of ["network", "audio-capture", "not-configured", "something-new"]) {
+        expect(transcriptionProblem(code).message).not.toMatch(code);
+    }
+});
+
+test("Whisper capture is only reported as available when this browser has both getUserMedia and MediaRecorder", () => {
+    const media = window.navigator.mediaDevices;
+    const recorder = window.MediaRecorder;
+    try {
+        Object.defineProperty(window.navigator, "mediaDevices", { value: { getUserMedia: () => {} }, configurable: true, writable: true });
+        window.MediaRecorder = function () {};
+        expect(whisperCaptureSupported()).toBe(true);
+
+        Object.defineProperty(window.navigator, "mediaDevices", { value: undefined, configurable: true, writable: true });
+        expect(whisperCaptureSupported()).toBe(false);
+
+        Object.defineProperty(window.navigator, "mediaDevices", { value: { getUserMedia: () => {} }, configurable: true, writable: true });
+        window.MediaRecorder = undefined;
+        expect(whisperCaptureSupported()).toBe(false);
+    } finally {
+        Object.defineProperty(window.navigator, "mediaDevices", { value: media, configurable: true, writable: true });
+        window.MediaRecorder = recorder;
     }
 });

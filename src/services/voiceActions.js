@@ -16,6 +16,7 @@ import { addToCart, getCart, setLineQuantity, estimateTotal } from "./cartStore"
 import { getCurrentProduct, setCurrentProduct, getBilling } from "./voiceContext";
 import { apiRequest } from "./apiClient";
 import { classifyAnswer } from "./speechParsers";
+import { categoryFromExactWords, extractEntities } from "./shoppingCatalog";
 
 // Adding something at or above this price is read back for confirmation first.
 export const CONFIRM_PRICE_THRESHOLD = 10000;
@@ -98,7 +99,8 @@ async function addAndReport(product, quantity, checkout, ctx) {
             `I have opened the billing page. Fill in your delivery details, then say "place my order". Nothing has been paid yet.`
         );
     }
-    return done(`Added ${quantity} ${product.name}${option} at ${rupees(product.price)} each to your cart.`);
+    ctx.navigate("/cart");
+    return done(`Added ${quantity} ${product.name}${option} at ${rupees(product.price)} each to your cart. I have opened your cart.`);
 }
 
 async function finish(outcome, ctx) {
@@ -191,11 +193,36 @@ export async function executeAction(action, ctx, products = []) {
     }
 
     switch (action.intent) {
-        case "NAVIGATE":
+        case "NAVIGATE": {
             ctx.navigate(action.target);
+            // A fresh category visit starts with no carried-over brand/colour/size filter; any
+            // other page has no category filter to apply at all.
+            const navCategory = action.target.startsWith("/categories/") ? action.target.slice("/categories/".length) : null;
+            ctx.setVoiceFilter(navCategory ? { category: navCategory } : null);
             return done(action.target === "/" ? "Opening the home page." : `Opening ${action.target.split("/").pop()}.`);
+        }
 
         case "SEARCH": {
+            // A bare category word ("shoes", "footwear") opens the real category page, like NAVIGATE.
+            const category = categoryFromExactWords(action.target);
+            if (category) {
+                ctx.navigate(`/categories/${category}`);
+                ctx.setVoiceFilter({ category });
+                return done(`Opening ${category}.`);
+            }
+            // A query naming a category plus brand/type/colour/etc ("nike shoes") opens that
+            // category page filtered accordingly, instead of a generic cross-catalog text search.
+            const entities = extractEntities(action.target, products);
+            if (entities.category) {
+                ctx.navigate(`/categories/${entities.category}`);
+                ctx.setVoiceFilter({
+                    category: entities.category, type: entities.type, brand: entities.brand,
+                    color: entities.color, size: entities.size, budgetMax: entities.budgetMax, budgetMin: entities.budgetMin,
+                });
+                const brandLabel = entities.brand ? `${entities.brand[0].toUpperCase()}${entities.brand.slice(1)}` : "";
+                return done(`Opening ${entities.category}${brandLabel ? `, filtered to ${brandLabel}` : ""}.`);
+            }
+            ctx.setVoiceFilter(null);
             ctx.setSearch(action.target);
             ctx.navigate("/categories/Search");
             const found = searchProducts(action.target, products);

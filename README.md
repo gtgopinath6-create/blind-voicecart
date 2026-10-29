@@ -27,7 +27,13 @@ An online store built for blind and visually impaired shoppers: every task can b
 
 ### Browser support for voice
 
-Voice input uses the Web Speech API, which works in **Chrome and Edge** (desktop and Android). In Chrome, speech is processed by Google's servers, so it needs an internet connection. Safari also offers it (Safari 14.1 and later), but this project has not been tested there. Firefox does not support it. Wherever voice input is missing or fails, Zoro still works by typing ("Type to Zoro" in its panel), and the rest of the site works fully by keyboard. "Hey Zoro" listening only works while the VoiceCart tab is open and you have switched it on. It is not a background, low-power, on-device wake-word detector (see "Zoro" below).
+Spoken **commands** (the microphone button, Alt+V, or a request right after "Hey Zoro") use one of two engines, chosen automatically unless set otherwise in "Listening and speech settings":
+- The browser's own Web Speech API, in **Chrome and Edge** (desktop and Android) and **Safari** (14.1+, not tested in this project). In Chrome, speech is processed by Google's servers (Edge: Microsoft, Safari: Apple), so it needs an internet connection.
+- Where that is unavailable (Firefox, and other browsers without it) — or when "Server transcription (Whisper)" is chosen — the browser records one command with `MediaRecorder` and uploads it to `POST /api/voice/transcribe`, which transcribes it with Groq's hosted Whisper model (`server/src/transcribe.js`). The recording is discarded after transcription; nothing is kept on the server. This needs `GROQ_API_KEY` configured on the server (see "Server environment" below) and an internet connection; without either, this engine is unavailable and Zoro falls back as described below.
+
+The **"Hey Zoro" wake-word listener** always uses the Web Speech API (there is no passive, always-listening equivalent for uploaded audio), so it only works in browsers that support it, only while the VoiceCart tab is open, and only once you have switched it on. It is not a background, low-power, on-device wake-word detector (see "Zoro" below).
+
+Wherever voice input is missing or fails — in either engine — Zoro still works by typing ("Type to Zoro" in its panel), and the rest of the site works fully by keyboard. `REACT_APP_VOICE_STT_MODE` can force one command-mode engine for everyone on a build (see `.env.example`).
 
 ## Zoro voice assistant
 
@@ -59,7 +65,7 @@ Voice input uses the Web Speech API, which works in **Chrome and Edge** (desktop
 
 **Checkout by voice.** "Check out" reads the server-calculated cart total and asks before opening the billing page. Zoro then asks for each missing delivery detail, reads it back (digits one by one), and fills it after "yes". The order needs an explicit "yes, place order" and goes through the same idempotent server checkout as the Pay button. Success is announced only from the server's confirmation.
 
-**AI.** `POST /api/voice/intent` returns one intent from a fixed list (now including `FIND_PRODUCT`, `SIGN_IN`, `REGISTER`, `HELP`) plus optional entities: `productQuery`, `category`, `productType`, `brand`, `color`, `size`, `sizeSystem`, `budgetMax`, `quantity`, `confirmation`, `correction`, `needsClarification`. Server and browser both validate them, and the browser grounds them in the catalog. Without the AI, the offline parser handles the same requests. Nothing is sent while a password field has focus.
+**AI.** `POST /api/voice/intent` returns one intent from a fixed list (now including `FIND_PRODUCT`, `SIGN_IN`, `REGISTER`, `HELP`) plus optional entities: `productQuery`, `category`, `productType`, `brand`, `color`, `size`, `sizeSystem`, `budgetMax`, `quantity`, `confirmation`, `correction`, `needsClarification`. Server and browser both validate them, and the browser grounds them in the catalog. Without the AI, the offline parser handles the same requests. `POST /api/voice/transcribe` is the separate speech-to-text step described in "Browser support for voice" above: it only returns text, never an intent, and that text goes through the same classify-then-execute pipeline as typed text. Nothing is sent to either endpoint while a password field has focus.
 
 **Speech output** ([src/services/announcer.js](src/services/announcer.js)). All speech in the app (Zoro, page announcements, focus and hover reading) goes through one queue with one voice and one speed:
 - The voice is the best installed voice for the chosen English, Indian English first (on a Mac, "Rishi"), and stays the same for the whole conversation. Novelty voices are never chosen. You can pick another voice in the settings; a chosen voice that is not installed on this device falls back to the automatic choice. Voices load after the page, so the choice is made once they arrive ("voiceschanged").
@@ -85,11 +91,12 @@ Testing on real devices: see [ZORO_SPEECH_TESTING.md](ZORO_SPEECH_TESTING.md).
 
 ```
 Browser (React, src/)                        Server (Node/Express, server/)
-  ├─ Firestore SDK: products (read), own      ├─ POST /api/voice/intent   → Groq (key stays here)
-  │  cart/wishlist/name (write), guarded       ├─ POST /api/checkout/quote → server-side totals
-  │  by firestore.rules                        ├─ POST /api/checkout       → atomic, idempotent order
-  └─ /api/* (with Firebase ID token) ───────▶ ├─ POST /api/wallet/refill  → disabled without a payment provider
-                                              └─ /api/admin/users…        → Firebase Admin SDK, admin claim only
+  ├─ Firestore SDK: products (read), own      ├─ POST /api/voice/intent      → Groq LLM (key stays here)
+  │  cart/wishlist/name (write), guarded       ├─ POST /api/voice/transcribe  → Groq Whisper (key stays here)
+  │  by firestore.rules                        ├─ POST /api/checkout/quote    → server-side totals
+  └─ /api/* (with Firebase ID token) ───────▶ ├─ POST /api/checkout          → atomic, idempotent order
+                                              ├─ POST /api/wallet/refill     → disabled without a payment provider
+                                              └─ /api/admin/users…           → Firebase Admin SDK, admin claim only
 ```
 
 - **AI:** the browser sends the spoken text and the product names to `/api/voice/intent`. The server calls Groq, which returns one intent from a fixed list. Both server and browser re-check that answer, and plain app code resolves the product against the real catalog and runs the action. If the AI is unavailable or rate-limited, a local keyword parser takes over.
@@ -145,6 +152,7 @@ cd ..
 | `GROQ_API_KEY` | for AI voice | Groq key, server only. Without it, the offline parser is used. |
 | `GROQ_MODEL` | no | Default `openai/gpt-oss-120b`. |
 | `GROQ_REASONING_EFFORT` | no | `low` (default), `medium` or `high`, for gpt-oss models. |
+| `GROQ_WHISPER_MODEL` | no | Default `whisper-large-v3-turbo`, used by `POST /api/voice/transcribe`. Reuses `GROQ_API_KEY`; billed separately from `GROQ_MODEL`'s text usage. |
 | `PORT` | no | Default `5055`. Hosting platforms set it themselves. |
 | `ALLOWED_ORIGINS` | only cross-origin | Comma-separated app origins, when the app is not served from the API's origin. |
 | `TRUST_PROXY` | no | Number of proxies in front of the server, used to find the client IP for rate limits. Default `1`; use `2` behind Firebase Hosting → Cloud Run (verify, see [DEPLOYMENT.md](DEPLOYMENT.md)). |
@@ -157,6 +165,7 @@ cd ..
 |---|---|---|
 | `REACT_APP_API_BASE_URL` | only cross-origin | API URL when `/api` is not served from the app's origin. Leave unset with the Firebase Hosting rewrite in `firebase.json`. |
 | `REACT_APP_FIREBASE_API_KEY`, `_AUTH_DOMAIN`, `_PROJECT_ID`, `_STORAGE_BUCKET`, `_MESSAGING_SENDER_ID`, `_APP_ID` | no (all six or none) | Point a build at another Firebase project, such as staging. With none set, the built-in `e-commerce-website-69` settings are used. A partial set stops the app with an error. |
+| `REACT_APP_VOICE_STT_MODE` | no | Forces which engine Zoro's command mode uses for everyone on this build: `automatic` (default), `webspeech`, or `whisper`. Overrides each shopper's own setting. See "Browser support for voice" above. |
 
 Run both (two terminals):
 
@@ -238,4 +247,4 @@ No payment provider is connected, so **wallet refill is disabled in production**
 - [ ] Server deployed with Firebase Admin credentials, `NODE_ENV=production`, and a `FIREBASE_PROJECT_ID` that matches the frontend.
 - [ ] A payment provider integrated with a verified webhook (or wallet refill left disabled).
 - [ ] Manual test with NVDA or VoiceOver and keyboard only.
-- [ ] Groq plan checked: the free tier allows about 8,000 tokens per minute, roughly 6–10 voice commands per minute for all users together. Above that, the offline parser handles commands.
+- [ ] Groq plan checked: the free tier allows about 8,000 tokens per minute, roughly 6–10 voice commands per minute for all users together. Above that, the offline parser handles commands. Whisper transcription has its own separate Groq rate limit (audio minutes), independent of this token budget.

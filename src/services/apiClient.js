@@ -68,6 +68,52 @@ export async function apiRequest(path, { method = "POST", body, auth = true, sig
     return data;
 }
 
+/**
+ * POSTs one recorded audio clip to /api/voice/transcribe (not JSON: apiRequest always sends JSON).
+ * Returns { text }. Same auth/error handling as apiRequest.
+ */
+export async function uploadAudio(blob, { signal, timeoutMs = 20000 } = {}) {
+    const headers = { "Content-Type": blob.type || "application/octet-stream" };
+    const user = getAuth().currentUser;
+    if (user) headers.Authorization = `Bearer ${await user.getIdToken()}`;
+
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+    const onAbort = () => controller.abort();
+    if (signal) {
+        if (signal.aborted) controller.abort();
+        else signal.addEventListener("abort", onAbort);
+    }
+
+    let response;
+    try {
+        response = await fetch(`${API_BASE}/api/voice/transcribe`, { method: "POST", headers, body: blob, signal: controller.signal });
+    } catch (e) {
+        if (timedOut) throw new ApiError(0, "timeout", "The server did not answer in time. Check your connection and try again.");
+        if (e.name === "AbortError") throw e;
+        throw new ApiError(0, "network", "Could not reach the server. Check your connection and try again.");
+    } finally {
+        clearTimeout(timer);
+        if (signal) signal.removeEventListener("abort", onAbort);
+    }
+
+    let data = null;
+    try {
+        data = await response.json();
+    } catch (e) {
+        data = null;
+    }
+    if (!response.ok) {
+        const err = (data && data.error) || {};
+        throw new ApiError(response.status, err.code || "error", err.message || `Request failed (HTTP ${response.status}).`, err.fields);
+    }
+    if (!data || typeof data.text !== "string") {
+        throw new ApiError(response.status, "bad_response", "The server sent an unexpected response. Please try again later.");
+    }
+    return data;
+}
+
 /** Random id used to make checkout and wallet requests safe to retry. */
 export function newRequestId() {
     if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID().replace(/-/g, "");

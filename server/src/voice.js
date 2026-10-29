@@ -25,6 +25,16 @@ const PAGES = [
   '/cart', '/wishlist', '/account', '/billing',
 ];
 
+// Spoken synonyms for the prompt only (NAVIGATE's target is still validated against PAGES exactly
+// in normalizeAction below); helps the model match phrasing like "add to cart page" or "wish list".
+const PAGE_HINTS = {
+  '/cart': 'shopping cart, add to cart page',
+  '/wishlist': 'wish list',
+  '/account': 'profile',
+  '/billing': 'checkout',
+};
+const pagesForPrompt = () => PAGES.map((p) => (PAGE_HINTS[p] ? `${p} (${PAGE_HINTS[p]})` : p)).join(', ');
+
 function cleanString(value, max) {
   if (typeof value !== 'string') return null;
   const s = value.replace(/[\u0000-\u001f]+/g, ' ').trim();
@@ -61,7 +71,7 @@ was not said: when the request is unclear, use UNKNOWN or set needsClarification
 PRODUCT NAMES (the only products that exist):
 ${lines || '- (catalog unavailable)'}
 
-PAGES: ${PAGES.join(', ')}
+PAGES: ${pagesForPrompt()}
 
 INTENTS:
 - NAVIGATE: open a page or category. target = one of PAGES exactly.

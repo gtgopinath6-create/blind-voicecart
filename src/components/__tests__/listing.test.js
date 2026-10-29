@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/rea
 import { MemoryRouter } from "react-router-dom";
 import { axe, toHaveNoViolations } from "jest-axe";
 import Container from "../container";
-import { UserContext, TTSContext, SearchContext } from "../../App";
+import { UserContext, TTSContext, SearchContext, VoiceFilterContext } from "../../App";
 import { createListing, loadCatalog, CatalogError } from "../../services/catalogService";
 
 expect.extend(toHaveNoViolations);
@@ -20,13 +20,15 @@ function fakeListing(steps) {
     return { more: jest.fn(async () => { const next = queue.shift(); if (next instanceof Error) throw next; return next; }) };
 }
 
-function renderPage(name = "Shoes", search = "") {
+function renderPage(name = "Shoes", search = "", voiceFilter = null) {
     return render(
         <MemoryRouter>
             <UserContext.Provider value={{ user: null, authReady: true }}>
                 <TTSContext.Provider value={{ screenReader: false, changeScreenReader: jest.fn() }}>
                     <SearchContext.Provider value={{ valueToBeSearched: search, setValueToBeSearched: jest.fn() }}>
-                        <Container name={name} />
+                        <VoiceFilterContext.Provider value={{ voiceFilter, setVoiceFilter: jest.fn() }}>
+                            <Container name={name} />
+                        </VoiceFilterContext.Provider>
                     </SearchContext.Provider>
                 </TTSContext.Provider>
             </UserContext.Provider>
@@ -87,6 +89,23 @@ test("a text search reads the shared catalog instead of paging", async () => {
     renderPage("Search Results", "air");
     expect(await screen.findByText("1 piece")).toBeInTheDocument();
     expect(createListing).not.toHaveBeenCalled();
+});
+
+test("a voice filter for this category narrows the list and highlights the matching Brand chip", async () => {
+    createListing.mockReturnValue(fakeListing([{ products: [shoe(1), shoe(2), shoe(3), shoe(4)], done: true }]));
+    renderPage("Shoes", "", { category: "Shoes", brand: "nike" });
+    await screen.findByText(/piece/);
+    // The list's own accessible name now includes the brand, same as a manual brand-chip click would.
+    const names = within(screen.getByRole("list", { name: "Shoes, Nike" })).getAllByRole("heading").map((h) => h.textContent);
+    expect(names).toEqual(["Shoe 1", "Shoe 3"]); // odd-numbered shoes are "nike" per the shoe() fixture
+    expect(screen.getByRole("button", { name: "Nike" })).toHaveAttribute("aria-pressed", "true");
+});
+
+test("a voice filter learned for a different category does not affect this page", async () => {
+    createListing.mockReturnValue(fakeListing([{ products: [shoe(1), shoe(2)], done: true }]));
+    renderPage("Shoes", "", { category: "Electronics", brand: "nike" });
+    await screen.findByText(/piece/);
+    expect(productNames()).toEqual(["Shoe 1", "Shoe 2"]);
 });
 
 test("the paged listing has no automatically detectable accessibility violations", async () => {
